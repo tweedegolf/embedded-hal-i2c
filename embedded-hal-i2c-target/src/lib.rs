@@ -49,7 +49,7 @@ pub enum ExpectHandledWrite<A, R, W> {
     NotHandled(Transaction<A, R, W>),
 }
 
-pub trait I2CSlave<A: AddressMode> {
+pub trait I2cTarget<A: AddressMode> {
     type Error;
     // Review note: Different error types for read and write transactions could
     // be interesting, but would result in either an Into bound in order for the
