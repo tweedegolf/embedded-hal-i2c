@@ -14,3 +14,10 @@ version = "0.1.0"
 dependencies = [
  "embedded-hal",
 ]
+
+[[package]]
+name = "i2c-io-expander"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-i2c-target",
+]

@@ -3,7 +3,7 @@
 // General review note: The variation presented here has all of the behavior specified. It is possible
 // to leave more of the behavior around when things are (n)acked implementation-defined.
 
-use embedded_hal::i2c::AddressMode;
+use embedded_hal::i2c::{AddressMode, SevenBitAddress};
 
 // Returned by `listen()`
 pub enum Transaction<A, R, W> {
@@ -49,7 +49,7 @@ pub enum ExpectHandledWrite<A, R, W> {
     NotHandled(Transaction<A, R, W>),
 }
 
-pub trait I2cTarget<A: AddressMode> {
+pub trait I2cTarget<A: AddressMode + PartialEq = SevenBitAddress> {
     type Error;
     // Review note: Different error types for read and write transactions could
     // be interesting, but would result in either an Into bound in order for the
@@ -98,7 +98,7 @@ pub trait I2cTarget<A: AddressMode> {
         }
     }
     /// Listen for a new transaction to occur, expecting a read
-    fn listen_expect_read<'a>(
+    async fn listen_expect_read<'a>(
         &'a mut self,
         expected_address: A,
         read_buffer: &[u8],
@@ -108,7 +108,7 @@ pub trait I2cTarget<A: AddressMode> {
 
     /// Listen for a new transaction to occur, expecting either
     // TODO: Add extra Transaction return type?
-    fn listen_expect_either<'a>(
+    async fn listen_expect_either<'a>(
         &'a mut self,
         expected_address: A,
         read_buffer: &[u8],
