@@ -5,8 +5,7 @@
 
 use embedded_hal::i2c::AddressMode;
 
-// Review note: As a minor variation, this type could if desired be split into multiple to better match what each
-// type of listen function may actually return.
+// Returned by `listen()`
 pub enum Transaction<A, R, W> {
     /// For listen, a read transaction has been started and the address byte
     /// received but not yet acknowledged. The address will be acknowledged
@@ -24,14 +23,30 @@ pub enum Transaction<A, R, W> {
     /// For an expected write listen, the entire buffer has been
     /// read from the master and the master wants to send more bytes.
     WriteTransaction { address: A, handler: W },
-    /// Only returned when an expected read was provided to the listen
-    /// function. The read transaction has completed and size bytes were
-    /// provided to the master.
-    ExpectedCompleteReadTransaction { address: A, size: usize },
-    /// Only returned when an expected write was provided to the listen
-    /// function. The write transaction has completed and size bytes were
-    /// received from the master.
-    ExpectedCompleteWriteTransaction { address: A, size: usize },
+}
+
+// Returned by `listen_expect_read()`
+pub enum ExpectHandledRead<A, R, W> {
+    // A read was handled completely as expected
+    HandledCompletely(usize),
+    // The expected piece was handled, the address was acked, but
+    // the device had more for us
+    HandledContinuedRead { handler: R },
+    // The expected piece was not handled, either due to a mismatched
+    // address, or mismatched transaction kind
+    NotHandled(Transaction<A, R, W>),
+}
+
+// Returned by `listen_expect_write()`
+pub enum ExpectHandledWrite<A, R, W> {
+    // A write was handled completely as expected
+    HandledCompletely(usize),
+    // The expected piece was handled, the address was acked, but
+    // the device wanted more from us
+    HandledContinuedWrite { handler: W },
+    // The expected piece was not handled, either due to a mismatched
+    // address, or mismatched transaction kind
+    NotHandled(Transaction<A, R, W>),
 }
 
 pub trait I2CSlave<A: AddressMode> {
@@ -59,24 +74,27 @@ pub trait I2CSlave<A: AddressMode> {
         &'a mut self,
         expected_address: A,
         write_buffer: &mut [u8],
-    ) -> Result<Transaction<A, Self::Read<'a>, Self::Write<'a>>, Self::Error> {
+    ) -> Result<ExpectHandledWrite<A, Self::Read<'a>, Self::Write<'a>>, Self::Error> {
         match self.listen().await? {
-            result @ Transaction::ReadTransaction { .. } => Ok(result),
+            result @ Transaction::ReadTransaction { .. } => {
+                Ok(ExpectHandledWrite::NotHandled(result))
+            }
             Transaction::WriteTransaction { address, handler } => {
                 if address == expected_address {
                     match handler.handle_part(write_buffer).await? {
                         WriteResult::Finished(size) => {
-                            Ok(Transaction::ExpectedCompleteWriteTransaction { address, size })
+                            Ok(ExpectHandledWrite::HandledCompletely(size))
                         }
                         WriteResult::PartialComplete(handler) => {
-                            Ok(Transaction::WriteTransaction { address, handler })
+                            Ok(ExpectHandledWrite::HandledContinuedWrite { handler })
                         }
                     }
                 } else {
-                    Ok(Transaction::WriteTransaction { address, handler })
+                    Ok(ExpectHandledWrite::NotHandled(
+                        Transaction::WriteTransaction { address, handler },
+                    ))
                 }
             }
-            _ => panic!("Listen must not return an ExpectedComplete"),
         }
     }
     /// Listen for a new transaction to occur, expecting a read
@@ -84,8 +102,12 @@ pub trait I2CSlave<A: AddressMode> {
         &'a mut self,
         expected_address: A,
         read_buffer: &[u8],
-    ) -> Result<Transaction<A, Self::Read<'a>, Self::Write<'a>>, Self::Error>;
+    ) -> Result<ExpectHandledRead<A, Self::Read<'a>, Self::Write<'a>>, Self::Error> {
+        todo!()
+    }
+
     /// Listen for a new transaction to occur, expecting either
+    // TODO: Add extra Transaction return type?
     fn listen_expect_either<'a>(
         &'a mut self,
         expected_address: A,
@@ -107,16 +129,10 @@ pub enum ReadResult<R> {
 pub trait ReadTransaction: Sized {
     type Error;
     /// Provide part of the data for the read transaction
-    async fn handle_part(
-        self,
-        buffer: &[u8],
-    ) -> Result<ReadResult<Self>, Self::Error>;
+    async fn handle_part(self, buffer: &[u8]) -> Result<ReadResult<Self>, Self::Error>;
+
     /// Finish the entire read transaction, providing the overrun character once the buffer runs out
-    async fn handle_complete(
-        self,
-        buffer: &[u8],
-        ovc: u8,
-    ) -> Result<usize, Self::Error> {
+    async fn handle_complete(self, buffer: &[u8], ovc: u8) -> Result<usize, Self::Error> {
         match self.handle_part(buffer).await? {
             ReadResult::Finished(size) => Ok(size),
             ReadResult::PartialComplete(mut this) => {
@@ -130,7 +146,7 @@ pub trait ReadTransaction: Sized {
                         }
                     }
                 }
-            },
+            }
         }
     }
 }
@@ -149,21 +165,16 @@ pub trait WriteTransaction: Sized {
 
     /// Accept buffer.len bytes of the write, acknowledging all but the last byte. The last byte
     /// is neither acknowledged nor not acknowledged.
-    async fn handle_part(
-        self,
-        buffer: &mut [u8],
-    ) -> Result<WriteResult<Self>, Self::Error>;
+    async fn handle_part(self, buffer: &mut [u8]) -> Result<WriteResult<Self>, Self::Error>;
+
     /// Accept buffer.len bytes of the write, acknowledging all but the last byte, and nacking on the last byte.
-    async fn handle_complete(
-        self,
-        buffer: &mut [u8],
-    ) -> Result<usize, Self::Error> {
+    async fn handle_complete(self, buffer: &mut [u8]) -> Result<usize, Self::Error> {
         match self.handle_part(buffer).await? {
             WriteResult::Finished(size) => Ok(size),
             WriteResult::PartialComplete(handler) => {
                 drop(handler); // sends the nack
                 Ok(buffer.len())
-            },
+            }
         }
     }
 }
