@@ -1,0 +1,3 @@
+[workspace]
+resolver = "3"
+members = ["embedded-hal-i2c-target"]
