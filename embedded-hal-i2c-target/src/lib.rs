@@ -5,6 +5,8 @@
 
 use embedded_hal::i2c::{AddressMode, SevenBitAddress};
 
+pub mod simulator;
+
 // Returned by `listen()`
 pub enum Transaction<A, R, W> {
     /// For listen, a read transaction has been started and the address byte
@@ -25,27 +27,27 @@ pub enum Transaction<A, R, W> {
     WriteTransaction { address: A, handler: W },
 }
 
-// Returned by `listen_expect_read()`
+/// Returned by `listen_expect_read()`
 pub enum ExpectHandledRead<A, R, W> {
-    // A read was handled completely as expected
+    /// A read was handled completely as expected
     HandledCompletely(usize),
-    // The expected piece was handled, the address was acked, but
-    // the device had more for us
+    /// The expected piece was handled, the address was acked, but
+    /// the device had more for us
     HandledContinuedRead { handler: R },
-    // The expected piece was not handled, either due to a mismatched
-    // address, or mismatched transaction kind
+    /// The expected piece was not handled, either due to a mismatched
+    /// address, or mismatched transaction kind
     NotHandled(Transaction<A, R, W>),
 }
 
-// Returned by `listen_expect_write()`
+/// Returned by `listen_expect_write()`
 pub enum ExpectHandledWrite<A, R, W> {
-    // A write was handled completely as expected
+    /// A write was handled completely as expected
     HandledCompletely(usize),
-    // The expected piece was handled, the address was acked, but
-    // the device wanted more from us
+    /// The expected piece was handled, the address was acked, but
+    /// the device wanted more from us
     HandledContinuedWrite { handler: W },
-    // The expected piece was not handled, either due to a mismatched
-    // address, or mismatched transaction kind
+    /// The expected piece was not handled, either due to a mismatched
+    /// address, or mismatched transaction kind
     NotHandled(Transaction<A, R, W>),
 }
 
@@ -113,7 +115,9 @@ pub trait I2cTarget<A: AddressMode + PartialEq = SevenBitAddress> {
         expected_address: A,
         read_buffer: &[u8],
         write_buffer: &mut [u8],
-    ) -> Result<Transaction<A, Self::Read<'a>, Self::Write<'a>>, Self::Error>;
+    ) -> Result<Transaction<A, Self::Read<'a>, Self::Write<'a>>, Self::Error> {
+        todo!()
+    }
 }
 
 /// Result of partial handling of a read transaction
@@ -172,9 +176,14 @@ pub trait WriteTransaction: Sized {
         match self.handle_part(buffer).await? {
             WriteResult::Finished(size) => Ok(size),
             WriteResult::PartialComplete(handler) => {
-                drop(handler); // sends the nack
+                handler.done().await; // sends the nack
                 Ok(buffer.len())
             }
         }
     }
+
+    /// Finishes the transaction
+    ///
+    /// TODO: This should be done in drop
+    async fn done(self);
 }
