@@ -70,6 +70,7 @@ impl<A> SimController<A> {
         match resp {
             TargetReaction::AckAddress => Ok(()),
             TargetReaction::NackAddress => {
+                self.send(ControllerAction::Stop).await;
                 Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address))
             }
             TargetReaction::AckWrite | TargetReaction::NackWrite | TargetReaction::ReadByte(_) => {
@@ -102,6 +103,7 @@ impl<A> SimController<A> {
             match resp {
                 TargetReaction::AckWrite => continue,
                 TargetReaction::NackWrite => {
+                    self.send(ControllerAction::Stop).await;
                     return Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data));
                 }
                 TargetReaction::AckAddress
@@ -159,13 +161,13 @@ pub struct SimTarget<A> {
 
 impl<A: core::fmt::Debug> SimTarget<A> {
     async fn react(&mut self, action: TargetReaction) {
-        eprintln!("Target reacts: {action:?}");
+        println!("Target reacts: {action:?}");
         self.to_controller.send(action).await.unwrap();
     }
 
     async fn recv(&mut self) -> ControllerAction<A> {
         let val = self.from_controller.recv().await.unwrap();
-        eprintln!("Target received: {val:?}");
+        println!("Target received: {val:?}");
         val
     }
 }
@@ -187,7 +189,7 @@ impl<A: AddressMode + PartialEq + core::fmt::Debug> I2cTarget<A> for SimTarget<A
                 (TargetState::WaitForAddress, ControllerAction::Address { address, .. })
                     if address != self.address =>
                 {
-                    self.state = TargetState::WaitForAddress;
+                    self.state = TargetState::WaitForStop;
                     self.react(TargetReaction::NackAddress).await;
                     continue;
                 }
@@ -294,7 +296,7 @@ impl<'a, A: core::fmt::Debug> OnRead<'a, A> {
     async fn handle_rest(&mut self) {
         if !self.ack_sent {
             self.inner.react(TargetReaction::NackAddress).await;
-            self.inner.state = TargetState::WaitForStart;
+            self.inner.state = TargetState::WaitForStop;
         } else {
             loop {
                 match self.inner.recv().await {
@@ -398,6 +400,7 @@ impl<'a, A: core::fmt::Debug> OnWrite<'a, A> {
     async fn done_inner(&mut self) {
         if !self.ack_sent {
             self.inner.react(TargetReaction::NackAddress).await;
+            self.inner.state = TargetState::WaitForStop;
         } else {
             match self.inner.recv().await {
                 ControllerAction::WriteByte(_) => {
@@ -469,7 +472,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn smoke_test() {
+    async fn write_read() {
         let (mut c, mut t) = simulator(0x42_u8);
 
         let control = async move {
@@ -500,6 +503,118 @@ mod tests {
             assert_eq!(address, 0x42);
             let buffer = [1, 2, 3, 4, 5, 6, 7, 8];
             handler.handle_complete(&buffer, 0xFF).await.unwrap();
+        };
+
+        tokio::join!(control, target);
+    }
+
+    #[tokio::test]
+    async fn nacking_everything() {
+        let (mut c, mut t) = simulator(0x42_u8);
+
+        let control = async move {
+            let result = c.read(0x42, &mut []).await.unwrap_err();
+            assert_eq!(
+                result,
+                ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address)
+            );
+
+            let result = c.write(0x42, &[]).await.unwrap_err();
+            assert_eq!(
+                result,
+                ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address)
+            );
+
+            let result = c.write(0x42, &[1, 2, 3]).await.unwrap_err();
+            assert_eq!(result, ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data));
+        };
+
+        let target = async move {
+            let Transaction::ReadTransaction { address, handler } = t.listen().await.unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(address, 0x42);
+            handler.done().await;
+
+            let Transaction::WriteTransaction { address, handler } = t.listen().await.unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(address, 0x42);
+            handler.done().await;
+
+            let Transaction::WriteTransaction { address, handler } = t.listen().await.unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(address, 0x42);
+            handler.handle_complete(&mut [0]).await.unwrap();
+
+            // Only drop once we are done
+            t
+        };
+
+        tokio::join!(control, target);
+    }
+
+    #[tokio::test]
+    async fn long_transation() {
+        let (mut c, mut t) = simulator(0x42_u8);
+
+        let control = async move {
+            let mut a = [0];
+            let mut b = [0];
+            let mut transactions = [
+                Operation::Write(&[1]),
+                Operation::Write(&[2]),
+                Operation::Read(&mut a),
+                Operation::Read(&mut b),
+                Operation::Write(&[5]),
+                Operation::Write(&[6]),
+            ];
+
+            c.transaction(0x42, &mut transactions).await.unwrap();
+
+            assert_eq!(a, [3]);
+            assert_eq!(b, [4]);
+        };
+
+        let target = async move {
+            for expect in [1, 2] {
+                let Transaction::WriteTransaction { address, handler } = t.listen().await.unwrap()
+                else {
+                    panic!()
+                };
+                assert_eq!(address, 0x42);
+                let mut buf = [0];
+                let len = handler.handle_complete(&mut buf).await.unwrap();
+                assert_eq!(&buf[..len], [expect]);
+            }
+
+            for expect in [3, 4] {
+                let Transaction::ReadTransaction { address, handler } = t.listen().await.unwrap()
+                else {
+                    panic!()
+                };
+                assert_eq!(address, 0x42);
+                let ReadResult::Finished(len) = handler.handle_part(&[expect, 0]).await.unwrap()
+                else {
+                    panic!()
+                };
+                assert_eq!(len, 1);
+            }
+
+            for expect in [5, 6] {
+                let Transaction::WriteTransaction { address, handler } = t.listen().await.unwrap()
+                else {
+                    panic!()
+                };
+                assert_eq!(address, 0x42);
+                let mut buf = [0];
+                let len = handler.handle_complete(&mut buf).await.unwrap();
+                assert_eq!(&buf[..len], [expect]);
+            }
         };
 
         tokio::join!(control, target);
