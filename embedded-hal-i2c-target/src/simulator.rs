@@ -1,10 +1,6 @@
 use crate::{I2cTarget, ReadResult, ReadTransaction, Transaction, WriteResult, WriteTransaction};
-use embedded_hal::i2c::{
-    AddressMode, ErrorKind, ErrorType, I2c, NoAcknowledgeSource, Operation, SevenBitAddress,
-};
+use embedded_hal::i2c::{AddressMode, ErrorKind, ErrorType, NoAcknowledgeSource, Operation};
 use embedded_hal_async::i2c::I2c as AsyncI2c;
-use std::arch::x86_64::_mm256_unpackhi_epi8;
-use std::fs::read_to_string;
 use std::mem::ManuallyDrop;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 
@@ -35,7 +31,6 @@ enum ControllerAction<A> {
     WriteByte(u8),
     ReadByte,
     AckRead,
-    NackRead,
 }
 
 #[derive(Debug)]
@@ -155,7 +150,7 @@ impl<A: AddressMode + Copy> AsyncI2c<A> for SimController<A> {
     }
 }
 
-struct SimTarget<A> {
+pub struct SimTarget<A> {
     address: A,
     state: TargetState,
     to_controller: Sender<TargetReaction>,
@@ -189,6 +184,13 @@ impl<A: AddressMode + PartialEq + core::fmt::Debug> I2cTarget<A> for SimTarget<A
                     self.state = TargetState::WaitForAddress;
                     continue;
                 }
+                (TargetState::WaitForAddress, ControllerAction::Address { address, .. })
+                    if address != self.address =>
+                {
+                    self.state = TargetState::WaitForAddress;
+                    self.react(TargetReaction::NackAddress).await;
+                    continue;
+                }
                 (TargetState::WaitForAddress, ControllerAction::Address { address, is_read }) => {
                     self.state = TargetState::InTransaction;
                     return Ok(if is_read {
@@ -220,7 +222,7 @@ impl<A: AddressMode + PartialEq + core::fmt::Debug> I2cTarget<A> for SimTarget<A
     }
 }
 
-struct OnRead<'a, A> {
+pub struct OnRead<'a, A> {
     inner: &'a mut SimTarget<A>,
     ack_sent: bool,
 }
@@ -247,7 +249,7 @@ impl<'a, A: core::fmt::Debug> OnRead<'a, A> {
                 self.inner.state = TargetState::WaitForAddress;
                 return Err(());
             }
-            ControllerAction::NackRead | ControllerAction::Stop => {
+            ControllerAction::Stop => {
                 self.inner.state = TargetState::WaitForStart;
                 return Err(());
             }
@@ -266,7 +268,7 @@ impl<'a, A: core::fmt::Debug> OnRead<'a, A> {
                 self.inner.state = TargetState::WaitForAddress;
                 Err(())
             }
-            ControllerAction::NackRead | ControllerAction::Stop => {
+            ControllerAction::Stop => {
                 self.inner.state = TargetState::WaitForStart;
                 Err(())
             }
@@ -348,7 +350,7 @@ impl<A: core::fmt::Debug> ReadTransaction for OnRead<'_, A> {
     }
 }
 
-struct OnWrite<'a, A> {
+pub struct OnWrite<'a, A> {
     inner: &'a mut SimTarget<A>,
     ack_sent: bool,
 }
@@ -383,8 +385,7 @@ impl<'a, A: core::fmt::Debug> OnWrite<'a, A> {
             action @ (ControllerAction::Start
             | ControllerAction::Address { .. }
             | ControllerAction::ReadByte
-            | ControllerAction::AckRead
-            | ControllerAction::NackRead) => {
+            | ControllerAction::AckRead) => {
                 panic!("Illegal controller action during write operation: {action:?}")
             }
         }
@@ -412,8 +413,7 @@ impl<'a, A: core::fmt::Debug> OnWrite<'a, A> {
                 action @ (ControllerAction::Start
                 | ControllerAction::Address { .. }
                 | ControllerAction::ReadByte
-                | ControllerAction::AckRead
-                | ControllerAction::NackRead) => {
+                | ControllerAction::AckRead) => {
                     panic!("Illegal controller action during after-write nacking: {action:?}")
                 }
             }

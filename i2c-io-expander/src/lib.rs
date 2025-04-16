@@ -3,15 +3,17 @@ use embedded_hal_i2c_target::{ExpectHandledWrite, I2cTarget};
 struct Interface;
 impl Interface {
     fn read_reg(&mut self, addr: u8, buf: &mut [u8]) -> Result<&[u8], ()> {
+        let _ = (addr, buf);
         todo!()
     }
 
     fn write_reg(&mut self, addr: u8, data: &[u8]) -> Result<(), ()> {
+        let _ = (addr, data);
         todo!()
     }
 }
 
-async fn run(mut i2c: impl I2cTarget) {
+pub async fn run(mut i2c: impl I2cTarget) {
     let my_address = 0x2a;
 
     // this is the interface with the rest of our program, where users can

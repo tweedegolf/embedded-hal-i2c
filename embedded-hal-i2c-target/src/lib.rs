@@ -105,6 +105,7 @@ pub trait I2cTarget<A: AddressMode + PartialEq = SevenBitAddress> {
         expected_address: A,
         read_buffer: &[u8],
     ) -> Result<ExpectHandledRead<A, Self::Read<'a>, Self::Write<'a>>, Self::Error> {
+        let _ = (expected_address, read_buffer);
         todo!()
     }
 
@@ -116,6 +117,7 @@ pub trait I2cTarget<A: AddressMode + PartialEq = SevenBitAddress> {
         read_buffer: &[u8],
         write_buffer: &mut [u8],
     ) -> Result<Transaction<A, Self::Read<'a>, Self::Write<'a>>, Self::Error> {
+        let _ = (expected_address, read_buffer, write_buffer);
         todo!()
     }
 }
