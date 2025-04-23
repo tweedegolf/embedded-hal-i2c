@@ -6,7 +6,8 @@
 
 pub use embedded_hal::i2c::I2c as SyncI2cController;
 pub use embedded_hal::i2c::{
-    AddressMode, Error, ErrorKind, ErrorType, Operation, SevenBitAddress, TenBitAddress,
+    AddressMode, Error, ErrorKind, ErrorType, NoAcknowledgeSource, Operation, SevenBitAddress,
+    TenBitAddress,
 };
 pub use embedded_hal_async::i2c::I2c as AsyncI2cController;
 

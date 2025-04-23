@@ -1,7 +1,6 @@
-use embedded_hal::i2c::{AddressMode, ErrorKind, ErrorType, NoAcknowledgeSource, Operation};
-use embedded_hal_async::i2c::I2c as AsyncI2c;
 use embedded_hal_i2c::{
-    I2cTarget, ReadResult, ReadTransaction, Transaction, WriteResult, WriteTransaction,
+    AddressMode, AsyncI2cController, ErrorKind, ErrorType, I2cTarget, NoAcknowledgeSource,
+    Operation, ReadResult, ReadTransaction, Transaction, WriteResult, WriteTransaction,
 };
 use std::mem::ManuallyDrop;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
@@ -124,7 +123,7 @@ impl<A> ErrorType for SimController<A> {
     type Error = ErrorKind;
 }
 
-impl<A: AddressMode + Copy> AsyncI2c<A> for SimController<A> {
+impl<A: AddressMode + Copy> AsyncI2cController<A> for SimController<A> {
     async fn transaction(
         &mut self,
         address: A,

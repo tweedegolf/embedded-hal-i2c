@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 embedded-hal-i2c = { path = "../embedded-hal-i2c" }
+tokio = { version = "1.44.2", features = ["sync"] }
 
-embedded-hal = "1.0.0"
-embedded-hal-async = "1.0.0"
-tokio = { version = "1.44.2", features = ["sync", "rt", "macros"] }
+[dev-dependencies]
+tokio = { version = "1.44.2", features = ["rt", "macros"] }
