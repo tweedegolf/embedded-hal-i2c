@@ -79,7 +79,7 @@ mod test_locally {
     }
 
     #[tokio::test]
-    async fn too_shart_is_ignored() {
+    async fn too_short_is_ignored() {
         let (mut cont, target) = simulator::simulator(0x2a_u8);
 
         let stop = Arc::new(AtomicBool::new(false));
