@@ -59,7 +59,6 @@ version = "0.1.0"
 dependencies = [
  "embedded-hal",
  "embedded-hal-async",
- "tokio",
 ]
 
 [[package]]
@@ -73,6 +72,7 @@ name = "i2c-io-expander"
 version = "0.1.0"
 dependencies = [
  "embedded-hal-i2c-target",
+ "simulator",
 ]
 
 [[package]]
@@ -113,9 +113,9 @@ checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.94"
+version = "1.0.95"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a31971752e70b8b2686d7e46ec17fb38dad4051d94024c88df49b667caea9c84"
+checksum = "02b3e5e68a3a1a02aad3ec490a98007cbc13c37cbe84a3cd7b8e406d76e7f778"
 dependencies = [
  "unicode-ident",
 ]
@@ -134,6 +134,16 @@ name = "rustc-demangle"
 version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "719b953e2095829ee67db738b3bfa9fa368c94900df327b3f07fe6e794d2fe1f"
+
+[[package]]
+name = "simulator"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+ "embedded-hal-async",
+ "embedded-hal-i2c-target",
+ "tokio",
+]
 
 [[package]]
 name = "syn"

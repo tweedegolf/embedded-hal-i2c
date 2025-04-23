@@ -1,3 +1,4 @@
+#![no_std]
 #![allow(async_fn_in_trait)]
 
 // General review note: The variation presented here has all of the behavior specified. It is possible
@@ -5,7 +6,6 @@
 
 use embedded_hal::i2c::{AddressMode, SevenBitAddress};
 
-pub mod simulator;
 
 // Returned by `listen()`
 pub enum Transaction<A, R, W> {
