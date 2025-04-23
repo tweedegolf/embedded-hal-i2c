@@ -1,4 +1,4 @@
-use embedded_hal_i2c_target::{ExpectHandledWrite, I2cTarget};
+use embedded_hal_i2c::{ExpectHandledWrite, I2cTarget};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub mod tests;

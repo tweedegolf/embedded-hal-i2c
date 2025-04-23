@@ -1,5 +1,5 @@
 use crate::Interface;
-use embedded_hal_i2c_target::I2cTarget;
+use embedded_hal_i2c::I2cTarget;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -41,7 +41,7 @@ pub async fn server(i2c: impl I2cTarget, stop: Arc<AtomicBool>) {
 #[cfg(test)]
 mod test_locally {
     use super::*;
-    use embedded_hal_i2c_target::AsyncI2cController;
+    use embedded_hal_i2c::AsyncI2cController;
     use std::sync::atomic::Ordering;
     use tokio::join;
 

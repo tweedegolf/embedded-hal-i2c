@@ -1,6 +1,6 @@
 use embedded_hal::i2c::{AddressMode, ErrorKind, ErrorType, NoAcknowledgeSource, Operation};
 use embedded_hal_async::i2c::I2c as AsyncI2c;
-use embedded_hal_i2c_target::{
+use embedded_hal_i2c::{
     I2cTarget, ReadResult, ReadTransaction, Transaction, WriteResult, WriteTransaction,
 };
 use std::mem::ManuallyDrop;

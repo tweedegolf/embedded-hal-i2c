@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-embedded-hal-i2c-target = { path = "../embedded-hal-i2c-target" }
+embedded-hal-i2c = { path = "../embedded-hal-i2c" }
 
 embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
