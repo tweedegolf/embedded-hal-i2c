@@ -4,7 +4,6 @@ use embedded_hal_i2c_target::{
     I2cTarget, ReadResult, ReadTransaction, Transaction, WriteResult, WriteTransaction,
 };
 use std::mem::ManuallyDrop;
-use std::pin::pin;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 pub fn simulator<A: AddressMode>(address: A) -> (SimController<A>, SimTarget<A>) {
@@ -285,13 +284,6 @@ impl<'a, A: core::fmt::Debug> OnRead<'a, A> {
         }
     }
 
-    pub async fn done(mut self) {
-        self.handle_rest().await;
-
-        // Inhibit drop calling defuse_inner again
-        self.defuse();
-    }
-
     const fn defuse(self) {
         let _ = ManuallyDrop::new(self);
     }
@@ -308,9 +300,7 @@ impl<'a, A: core::fmt::Debug> OnRead<'a, A> {
 
 impl<A: core::fmt::Debug> Drop for OnRead<'_, A> {
     fn drop(&mut self) {
-        let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
-        let mut fut = pin!(self.handle_rest());
-        while fut.as_mut().poll(&mut cx).is_pending() {}
+        panic!("Do not drop Read handles!");
     }
 }
 
@@ -332,6 +322,13 @@ impl<A: core::fmt::Debug> ReadTransaction for OnRead<'_, A> {
         }
 
         Ok(ReadResult::PartialComplete(self))
+    }
+
+    async fn done(mut self) {
+        self.handle_rest().await;
+
+        // Inhibit drop calling defuse_inner again
+        self.defuse();
     }
 }
 
@@ -409,8 +406,7 @@ impl<'a, A: core::fmt::Debug> OnWrite<'a, A> {
 
 impl<A> Drop for OnWrite<'_, A> {
     fn drop(&mut self) {
-        todo!()
-        // self.keep_nacking();
+        panic!("Do not drop Write handles!");
     }
 }
 

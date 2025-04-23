@@ -102,3 +102,22 @@ mod test_locally {
         join!(server_fut, client_fut);
     }
 
+    #[tokio::test]
+    async fn overreading_is_filled() {
+        let (mut cont, target) = simulator::simulator(0x2a_u8);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let server_fut = server(target, Arc::clone(&stop));
+
+        let client_fut = async move {
+            let mut buf = [0xFF; 5];
+            cont.write_read(0x2a, &[0], &mut buf).await.unwrap();
+
+            assert_eq!(buf, [0, 0, 0, 0, 42]);
+
+            stop.store(true, Ordering::Relaxed);
+        };
+
+        join!(server_fut, client_fut);
+    }
+}

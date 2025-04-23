@@ -11,6 +11,7 @@ pub use embedded_hal::i2c::{
 pub use embedded_hal_async::i2c::I2c as AsyncI2cController;
 
 // Returned by `listen()`
+#[must_use = "dropping a transaction stalls the bus"]
 pub enum Transaction<A, R, W> {
     /// For listen, a read transaction has been started and the address byte
     /// received but not yet acknowledged. The address will be acknowledged
@@ -30,7 +31,17 @@ pub enum Transaction<A, R, W> {
     WriteTransaction { address: A, handler: W },
 }
 
+impl<A, R: ReadTransaction, W: WriteTransaction> Transaction<A, R, W> {
+    pub async fn done(self) {
+        match self {
+            Transaction::ReadTransaction { handler, .. } => handler.done().await,
+            Transaction::WriteTransaction { handler, .. } => handler.done().await,
+        }
+    }
+}
+
 /// Returned by `listen_expect_read()`
+#[must_use = "dropping a transaction stalls the bus"]
 pub enum ExpectHandledRead<A, R, W> {
     /// A read was handled completely as expected
     HandledCompletely(usize),
@@ -42,7 +53,18 @@ pub enum ExpectHandledRead<A, R, W> {
     NotHandled(Transaction<A, R, W>),
 }
 
+impl<A, R: ReadTransaction, W: WriteTransaction> ExpectHandledRead<A, R, W> {
+    pub async fn done(self) {
+        match self {
+            ExpectHandledRead::HandledCompletely(_) => {}
+            ExpectHandledRead::HandledContinuedRead { handler, .. } => handler.done().await,
+            ExpectHandledRead::NotHandled(transaction) => transaction.done().await,
+        }
+    }
+}
+
 /// Returned by `listen_expect_write()`
+#[must_use = "dropping a transaction stalls the bus"]
 pub enum ExpectHandledWrite<A, R, W> {
     /// A write was handled completely as expected
     HandledCompletely(usize),
@@ -52,6 +74,16 @@ pub enum ExpectHandledWrite<A, R, W> {
     /// The expected piece was not handled, either due to a mismatched
     /// address, or mismatched transaction kind
     NotHandled(Transaction<A, R, W>),
+}
+
+impl<A, R: ReadTransaction, W: WriteTransaction> ExpectHandledWrite<A, R, W> {
+    pub async fn done(self) {
+        match self {
+            ExpectHandledWrite::HandledCompletely(_) => {}
+            ExpectHandledWrite::HandledContinuedWrite { handler, .. } => handler.done().await,
+            ExpectHandledWrite::NotHandled(transaction) => transaction.done().await,
+        }
+    }
 }
 
 pub trait I2cTarget<A: AddressMode + PartialEq = SevenBitAddress> {
@@ -140,6 +172,7 @@ pub trait I2cTarget<A: AddressMode + PartialEq = SevenBitAddress> {
 }
 
 /// Result of partial handling of a read transaction
+#[must_use = "dropping a transaction stalls the bus"]
 pub enum ReadResult<R> {
     Finished(usize),
     PartialComplete(R),
@@ -172,9 +205,13 @@ pub trait ReadTransaction: Sized {
             }
         }
     }
+
+    // TODO: Require this instead of drop
+    async fn done(self);
 }
 
 /// Result of partial handling of a write transaction
+#[must_use = "dropping a transaction stalls the bus"]
 pub enum WriteResult<W> {
     Finished(usize),
     PartialComplete(W),
