@@ -1,26 +1,20 @@
 use embedded_hal_i2c_target::{ExpectHandledWrite, I2cTarget};
+use std::sync::atomic::{AtomicBool, Ordering};
 
-struct Interface;
-impl Interface {
-    fn read_reg(&mut self, addr: u8, buf: &mut [u8]) -> Result<&[u8], ()> {
-        let _ = (addr, buf);
-        todo!()
-    }
+pub mod tests;
 
-    fn write_reg(&mut self, addr: u8, data: &[u8]) -> Result<(), ()> {
-        let _ = (addr, data);
-        todo!()
-    }
+pub trait Interface {
+    type Error;
+
+    fn read_reg<'buf>(&mut self, addr: u8, buf: &'buf mut [u8]) -> Result<&'buf [u8], Self::Error>;
+    fn write_reg(&mut self, addr: u8, data: &[u8]) -> Result<(), Self::Error>;
 }
 
-pub async fn run(mut i2c: impl I2cTarget) {
+pub async fn run(mut i2c: impl I2cTarget, mut interface: impl Interface, stop: &AtomicBool) {
     let my_address = 0x2a;
 
-    // this is the interface with the rest of our program, where users can
-    // set/get data or get notified on reads/writes of registers
-    let mut interface = Interface;
     let mut buf = [0u8; 64];
-    loop {
+    while !stop.load(Ordering::Relaxed) {
         // We need to start with a write. This will either be a single byte (for a "write then read"),
         // or a multi-byte sequence (for a "write then write")
         let res = i2c.listen_expect_write(my_address, &mut buf).await;

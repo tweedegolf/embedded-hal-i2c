@@ -73,6 +73,7 @@ version = "0.1.0"
 dependencies = [
  "embedded-hal-i2c-target",
  "simulator",
+ "tokio",
 ]
 
 [[package]]

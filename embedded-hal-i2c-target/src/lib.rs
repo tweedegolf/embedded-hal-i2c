@@ -4,8 +4,11 @@
 // General review note: The variation presented here has all of the behavior specified. It is possible
 // to leave more of the behavior around when things are (n)acked implementation-defined.
 
-use embedded_hal::i2c::{AddressMode, SevenBitAddress};
-
+pub use embedded_hal::i2c::I2c as SyncI2cController;
+pub use embedded_hal::i2c::{
+    AddressMode, Error, ErrorKind, ErrorType, Operation, SevenBitAddress, TenBitAddress,
+};
+pub use embedded_hal_async::i2c::I2c as AsyncI2cController;
 
 // Returned by `listen()`
 pub enum Transaction<A, R, W> {
@@ -105,8 +108,22 @@ pub trait I2cTarget<A: AddressMode + PartialEq = SevenBitAddress> {
         expected_address: A,
         read_buffer: &[u8],
     ) -> Result<ExpectHandledRead<A, Self::Read<'a>, Self::Write<'a>>, Self::Error> {
-        let _ = (expected_address, read_buffer);
-        todo!()
+        match self.listen().await? {
+            result @ Transaction::WriteTransaction { .. } => {
+                Ok(ExpectHandledRead::NotHandled(result))
+            }
+            Transaction::ReadTransaction { address, handler } if address == expected_address => {
+                match handler.handle_part(read_buffer).await? {
+                    ReadResult::Finished(size) => Ok(ExpectHandledRead::HandledCompletely(size)),
+                    ReadResult::PartialComplete(handler) => {
+                        Ok(ExpectHandledRead::HandledContinuedRead { handler })
+                    }
+                }
+            }
+            result @ Transaction::ReadTransaction { .. } => {
+                Ok(ExpectHandledRead::NotHandled(result))
+            }
+        }
     }
 
     /// Listen for a new transaction to occur, expecting either

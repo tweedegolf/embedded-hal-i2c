@@ -4,6 +4,7 @@ use embedded_hal_i2c_target::{
     I2cTarget, ReadResult, ReadTransaction, Transaction, WriteResult, WriteTransaction,
 };
 use std::mem::ManuallyDrop;
+use std::pin::pin;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 pub fn simulator<A: AddressMode>(address: A) -> (SimController<A>, SimTarget<A>) {
@@ -31,7 +32,7 @@ enum ControllerAction<A> {
     Stop,
     Address { address: A, is_read: bool },
     WriteByte(u8),
-    ReadByte,
+    RequestByte,
     AckRead,
 }
 
@@ -86,7 +87,7 @@ impl<A> SimController<A> {
         self.send_address(address, true).await?;
 
         for b in buf {
-            let resp = self.transact(ControllerAction::ReadByte).await;
+            let resp = self.transact(ControllerAction::RequestByte).await;
             let TargetReaction::ReadByte(byte) = resp else {
                 unreachable!()
             };
@@ -163,13 +164,13 @@ pub struct SimTarget<A> {
 
 impl<A: core::fmt::Debug> SimTarget<A> {
     async fn react(&mut self, action: TargetReaction) {
-        println!("Target reacts: {action:?}");
+        println!("C<T: {action:?}");
         self.to_controller.send(action).await.unwrap();
     }
 
     async fn recv(&mut self) -> ControllerAction<A> {
         let val = self.from_controller.recv().await.unwrap();
-        println!("Target received: {val:?}");
+        println!("C>T: {val:?}");
         val
     }
 }
@@ -226,7 +227,7 @@ impl<A: AddressMode + PartialEq + core::fmt::Debug> I2cTarget<A> for SimTarget<A
     }
 }
 
-pub struct OnRead<'a, A> {
+pub struct OnRead<'a, A: core::fmt::Debug> {
     inner: &'a mut SimTarget<A>,
     ack_sent: bool,
 }
@@ -248,7 +249,7 @@ impl<'a, A: core::fmt::Debug> OnRead<'a, A> {
         }
 
         match self.inner.recv().await {
-            ControllerAction::ReadByte => {}
+            ControllerAction::RequestByte => {}
             ControllerAction::Restart => {
                 self.inner.state = TargetState::WaitForAddress;
                 return Err(());
@@ -300,36 +301,16 @@ impl<'a, A: core::fmt::Debug> OnRead<'a, A> {
             self.inner.react(TargetReaction::NackAddress).await;
             self.inner.state = TargetState::WaitForStop;
         } else {
-            loop {
-                match self.inner.recv().await {
-                    ControllerAction::Restart => {
-                        self.inner.state = TargetState::WaitForAddress;
-                        return;
-                    }
-                    ControllerAction::Stop => {
-                        self.inner.state = TargetState::WaitForStart;
-                        return;
-                    }
-                    ControllerAction::ReadByte => match self.send_byte(Self::FILL).await {
-                        Ok(()) => continue,
-                        Err(()) => {
-                            self.inner.state = TargetState::WaitForStop;
-                            return;
-                        }
-                    },
-                    action => {
-                        panic!("Controller sent {action:?} during read")
-                    }
-                }
-            }
+            while let Ok(()) = self.send_byte(Self::FILL).await {}
         }
     }
 }
 
-impl<A> Drop for OnRead<'_, A> {
+impl<A: core::fmt::Debug> Drop for OnRead<'_, A> {
     fn drop(&mut self) {
-        todo!();
-        // self.handle_rest();
+        let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+        let mut fut = pin!(self.handle_rest());
+        while fut.as_mut().poll(&mut cx).is_pending() {}
     }
 }
 
@@ -388,7 +369,7 @@ impl<'a, A: core::fmt::Debug> OnWrite<'a, A> {
             }
             action @ (ControllerAction::Start
             | ControllerAction::Address { .. }
-            | ControllerAction::ReadByte
+            | ControllerAction::RequestByte
             | ControllerAction::AckRead) => {
                 panic!("Illegal controller action during write operation: {action:?}")
             }
@@ -417,7 +398,7 @@ impl<'a, A: core::fmt::Debug> OnWrite<'a, A> {
                 }
                 action @ (ControllerAction::Start
                 | ControllerAction::Address { .. }
-                | ControllerAction::ReadByte
+                | ControllerAction::RequestByte
                 | ControllerAction::AckRead) => {
                     panic!("Illegal controller action during after-write nacking: {action:?}")
                 }

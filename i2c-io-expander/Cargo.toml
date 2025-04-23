@@ -5,3 +5,7 @@ edition = "2024"
 
 [dependencies]
 embedded-hal-i2c-target = { path = "../embedded-hal-i2c-target" }
+
+[dev-dependencies]
+simulator = { path = "../simulator" }
+tokio = { version = "1.44.2", features = ["rt", "macros"] }
