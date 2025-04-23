@@ -38,6 +38,7 @@ pub async fn server(i2c: impl I2cTarget, stop: Arc<AtomicBool>) {
     super::run(i2c, iface, &stop).await;
 }
 
+// TODO: Make this runnable with real devices
 #[cfg(test)]
 mod test_locally {
     use super::*;
