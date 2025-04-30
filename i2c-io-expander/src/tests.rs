@@ -42,13 +42,15 @@ pub async fn server(i2c: impl I2cTarget, stop: Arc<AtomicBool>) {
 #[cfg(test)]
 mod test_locally {
     use super::*;
-    use embedded_hal_i2c::AsyncI2cController;
+    use embedded_hal_i2c::{AnyAddress, AsyncI2cController};
     use std::sync::atomic::Ordering;
     use tokio::join;
 
+    const A7: u8 = 0x2a;
+
     #[tokio::test]
     async fn works_locally() {
-        let (mut cont, target) = simulator::simulator(0x2a_u8);
+        let (mut cont, target) = simulator::simulator(A7.into());
 
         let stop = Arc::new(AtomicBool::new(false));
         let server_fut = server(target, Arc::clone(&stop));
@@ -56,19 +58,19 @@ mod test_locally {
         let client_fut = async move {
             for i in 0..32 {
                 let mut buf = [0xFF; 4];
-                cont.write_read(0x2a, &[i], &mut buf).await.unwrap();
+                cont.write_read(A7, &[i], &mut buf).await.unwrap();
 
                 assert_eq!(buf, [0; 4]);
             }
 
             for i in 0..32 {
                 let buf = [i, i, 0, 0, 0];
-                cont.write(0x2a, &buf).await.unwrap();
+                cont.write(A7, &buf).await.unwrap();
             }
 
             for i in 0..32 {
                 let mut buf = [0xFF; 4];
-                cont.write_read(0x2a, &[i], &mut buf).await.unwrap();
+                cont.write_read(A7, &[i], &mut buf).await.unwrap();
 
                 assert_eq!(buf, [i, 0, 0, 0]);
             }
@@ -81,18 +83,18 @@ mod test_locally {
 
     #[tokio::test]
     async fn too_short_is_ignored() {
-        let (mut cont, target) = simulator::simulator(0x2a_u8);
+        let (mut cont, target) = simulator::simulator(A7.into());
 
         let stop = Arc::new(AtomicBool::new(false));
         let server_fut = server(target, Arc::clone(&stop));
 
         let client_fut = async move {
             let buf = [0, 1, 2, 3];
-            cont.write(0x2a, &buf).await.unwrap();
+            cont.write(A7, &buf).await.unwrap();
 
             for i in 0..32 {
                 let mut buf = [0xFF; 4];
-                cont.write_read(0x2a, &[i], &mut buf).await.unwrap();
+                cont.write_read(A7, &[i], &mut buf).await.unwrap();
 
                 assert_eq!(buf, [0, 0, 0, 0]);
             }
@@ -105,14 +107,14 @@ mod test_locally {
 
     #[tokio::test]
     async fn overreading_is_filled() {
-        let (mut cont, target) = simulator::simulator(0x2a_u8);
+        let (mut cont, target) = simulator::simulator(A7.into());
 
         let stop = Arc::new(AtomicBool::new(false));
         let server_fut = server(target, Arc::clone(&stop));
 
         let client_fut = async move {
             let mut buf = [0xFF; 5];
-            cont.write_read(0x2a, &[0], &mut buf).await.unwrap();
+            cont.write_read(A7, &[0], &mut buf).await.unwrap();
 
             assert_eq!(buf, [0, 0, 0, 0, 42]);
 

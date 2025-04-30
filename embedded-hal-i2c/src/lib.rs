@@ -11,9 +11,27 @@ pub use embedded_hal::i2c::{
 };
 pub use embedded_hal_async::i2c::I2c as AsyncI2cController;
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum AnyAddress {
+    Seven(u8),
+    Ten(u16),
+}
+
+impl From<SevenBitAddress> for AnyAddress {
+    fn from(value: SevenBitAddress) -> Self {
+        Self::Seven(value)
+    }
+}
+
+impl From<TenBitAddress> for AnyAddress {
+    fn from(value: TenBitAddress) -> Self {
+        Self::Ten(value)
+    }
+}
+
 // Returned by `listen()`
-#[must_use = "dropping a transaction stalls the bus"]
-pub enum Transaction<A, R, W> {
+#[must_use = "Implicitly dropping a Transaction will NAK the request"]
+pub enum Transaction<R, W> {
     /// For listen, a read transaction has been started and the address byte
     /// received but not yet acknowledged. The address will be acknowledged
     /// on the call to handle_part or handle_complete on the handler. To nack
@@ -21,7 +39,7 @@ pub enum Transaction<A, R, W> {
     ///
     /// For an expected read listen, the entire buffer has been
     /// sent to the master and the master desires more bytes.
-    ReadTransaction { address: A, handler: R },
+    ReadTransaction { address: AnyAddress, handler: R },
     /// For listen, a write transaction has been started and the address byte
     /// received but not yet acknowledged. The address will be acknowledged
     /// on the call to handle_part or handle_complete on the handler. To nack
@@ -29,21 +47,12 @@ pub enum Transaction<A, R, W> {
     ///
     /// For an expected write listen, the entire buffer has been
     /// read from the master and the master wants to send more bytes.
-    WriteTransaction { address: A, handler: W },
-}
-
-impl<A, R: ReadTransaction, W: WriteTransaction> Transaction<A, R, W> {
-    pub async fn done(self) {
-        match self {
-            Transaction::ReadTransaction { handler, .. } => handler.done().await,
-            Transaction::WriteTransaction { handler, .. } => handler.done().await,
-        }
-    }
+    WriteTransaction { address: AnyAddress, handler: W },
 }
 
 /// Returned by `listen_expect_read()`
-#[must_use = "dropping a transaction stalls the bus"]
-pub enum ExpectHandledRead<A, R, W> {
+#[must_use = "Implicitly dropping a Transaction will NAK the request"]
+pub enum ExpectHandledRead<R, W> {
     /// A read was handled completely as expected
     HandledCompletely(usize),
     /// The expected piece was handled, the address was acked, but
@@ -51,22 +60,12 @@ pub enum ExpectHandledRead<A, R, W> {
     HandledContinuedRead { handler: R },
     /// The expected piece was not handled, either due to a mismatched
     /// address, or mismatched transaction kind
-    NotHandled(Transaction<A, R, W>),
-}
-
-impl<A, R: ReadTransaction, W: WriteTransaction> ExpectHandledRead<A, R, W> {
-    pub async fn done(self) {
-        match self {
-            ExpectHandledRead::HandledCompletely(_) => {}
-            ExpectHandledRead::HandledContinuedRead { handler, .. } => handler.done().await,
-            ExpectHandledRead::NotHandled(transaction) => transaction.done().await,
-        }
-    }
+    NotHandled(Transaction<R, W>),
 }
 
 /// Returned by `listen_expect_write()`
-#[must_use = "dropping a transaction stalls the bus"]
-pub enum ExpectHandledWrite<A, R, W> {
+#[must_use = "Implicitly dropping a Transaction will NAK the request"]
+pub enum ExpectHandledWrite<R, W> {
     /// A write was handled completely as expected
     HandledCompletely(usize),
     /// The expected piece was handled, the address was acked, but
@@ -74,20 +73,10 @@ pub enum ExpectHandledWrite<A, R, W> {
     HandledContinuedWrite { handler: W },
     /// The expected piece was not handled, either due to a mismatched
     /// address, or mismatched transaction kind
-    NotHandled(Transaction<A, R, W>),
+    NotHandled(Transaction<R, W>),
 }
 
-impl<A, R: ReadTransaction, W: WriteTransaction> ExpectHandledWrite<A, R, W> {
-    pub async fn done(self) {
-        match self {
-            ExpectHandledWrite::HandledCompletely(_) => {}
-            ExpectHandledWrite::HandledContinuedWrite { handler, .. } => handler.done().await,
-            ExpectHandledWrite::NotHandled(transaction) => transaction.done().await,
-        }
-    }
-}
-
-pub trait I2cTarget<A: AddressMode + PartialEq = SevenBitAddress> {
+pub trait I2cTarget {
     type Error;
     // Review note: Different error types for read and write transactions could
     // be interesting, but would result in either an Into bound in order for the
@@ -100,9 +89,8 @@ pub trait I2cTarget<A: AddressMode + PartialEq = SevenBitAddress> {
         Self: 'a;
 
     /// Listen for a new transaction to occur
-    async fn listen(
-        &mut self,
-    ) -> Result<Transaction<A, Self::Read<'_>, Self::Write<'_>>, Self::Error>;
+    async fn listen(&mut self)
+    -> Result<Transaction<Self::Read<'_>, Self::Write<'_>>, Self::Error>;
 
     // Review note: Below functions could provide default implementations. They
     // are provided to allow for additional hardware acceleration.
@@ -110,9 +98,9 @@ pub trait I2cTarget<A: AddressMode + PartialEq = SevenBitAddress> {
     /// Listen for a new transaction to occur, expecting a write
     async fn listen_expect_write<'a>(
         &'a mut self,
-        expected_address: A,
+        expected_address: AnyAddress,
         write_buffer: &mut [u8],
-    ) -> Result<ExpectHandledWrite<A, Self::Read<'a>, Self::Write<'a>>, Self::Error> {
+    ) -> Result<ExpectHandledWrite<Self::Read<'a>, Self::Write<'a>>, Self::Error> {
         match self.listen().await? {
             result @ Transaction::ReadTransaction { .. } => {
                 Ok(ExpectHandledWrite::NotHandled(result))
@@ -138,9 +126,9 @@ pub trait I2cTarget<A: AddressMode + PartialEq = SevenBitAddress> {
     /// Listen for a new transaction to occur, expecting a read
     async fn listen_expect_read<'a>(
         &'a mut self,
-        expected_address: A,
+        expected_address: AnyAddress,
         read_buffer: &[u8],
-    ) -> Result<ExpectHandledRead<A, Self::Read<'a>, Self::Write<'a>>, Self::Error> {
+    ) -> Result<ExpectHandledRead<Self::Read<'a>, Self::Write<'a>>, Self::Error> {
         match self.listen().await? {
             result @ Transaction::WriteTransaction { .. } => {
                 Ok(ExpectHandledRead::NotHandled(result))
@@ -163,17 +151,17 @@ pub trait I2cTarget<A: AddressMode + PartialEq = SevenBitAddress> {
     // TODO: Add extra Transaction return type?
     async fn listen_expect_either<'a>(
         &'a mut self,
-        expected_address: A,
+        expected_address: AnyAddress,
         read_buffer: &[u8],
         write_buffer: &mut [u8],
-    ) -> Result<Transaction<A, Self::Read<'a>, Self::Write<'a>>, Self::Error> {
+    ) -> Result<Transaction<Self::Read<'a>, Self::Write<'a>>, Self::Error> {
         let _ = (expected_address, read_buffer, write_buffer);
         todo!()
     }
 }
 
 /// Result of partial handling of a read transaction
-#[must_use = "dropping a transaction stalls the bus"]
+#[must_use = "Implicitly dropping a Transaction will NAK the request"]
 pub enum ReadResult<R> {
     Finished(usize),
     PartialComplete(R),
@@ -206,13 +194,10 @@ pub trait ReadTransaction: Sized {
             }
         }
     }
-
-    // TODO: Require this instead of drop
-    async fn done(self);
 }
 
 /// Result of partial handling of a write transaction
-#[must_use = "dropping a transaction stalls the bus"]
+#[must_use = "Implicitly dropping a Transaction will NAK the request"]
 pub enum WriteResult<W> {
     Finished(usize),
     PartialComplete(W),
@@ -232,15 +217,7 @@ pub trait WriteTransaction: Sized {
     async fn handle_complete(self, buffer: &mut [u8]) -> Result<usize, Self::Error> {
         match self.handle_part(buffer).await? {
             WriteResult::Finished(size) => Ok(size),
-            WriteResult::PartialComplete(handler) => {
-                handler.done().await; // sends the nack
-                Ok(buffer.len())
-            }
+            WriteResult::PartialComplete(_) => Ok(buffer.len()),
         }
     }
-
-    /// Finishes the transaction
-    ///
-    /// TODO: This should be done in drop
-    async fn done(self);
 }

@@ -11,7 +11,7 @@ pub trait Interface {
 }
 
 pub async fn run(mut i2c: impl I2cTarget, mut interface: impl Interface, stop: &AtomicBool) {
-    let my_address = 0x2a;
+    let my_address = 0x2a_u8.into();
 
     let mut buf = [0u8; 64];
     while !stop.load(Ordering::Relaxed) {
@@ -35,9 +35,7 @@ pub async fn run(mut i2c: impl I2cTarget, mut interface: impl Interface, stop: &
                 if let Ok(data) = interface.read_reg(*reg_addr, &mut buf) {
                     // we don't really care if they gave up, if this is complete, then great,
                     // if not, we'll drop the handler
-                    if let Ok(t) = i2c.listen_expect_read(my_address, data).await {
-                        t.done().await
-                    }
+                    let _ = i2c.listen_expect_read(my_address, data).await;
                 }
             }
             [reg_addr, data @ ..] => {
