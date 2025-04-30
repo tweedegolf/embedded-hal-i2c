@@ -1,448 +1,340 @@
 use embedded_hal_i2c::{
-    AddressMode, AsyncI2cController, ErrorKind, ErrorType, I2cTarget, NoAcknowledgeSource,
-    Operation, ReadResult, ReadTransaction, Transaction, WriteResult, WriteTransaction,
+    AddressMode, AnyAddress, AsyncI2cController, ErrorKind, ErrorType, I2cTarget,
+    NoAcknowledgeSource, Operation, ReadResult, ReadTransaction, Transaction, WriteResult,
+    WriteTransaction,
 };
-use std::mem::ManuallyDrop;
+use std::cmp::min;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
+use tokio::sync::oneshot;
 
-pub fn simulator<A: AddressMode>(address: A) -> (SimController<A>, SimTarget<A>) {
-    let (to_controller, from_target) = channel(2);
-    let (to_target, from_controller) = channel(2);
+pub fn simulator(address: AnyAddress) -> (SimController, SimTarget) {
+    let (to_target, from_controller) = channel(1);
 
     (
-        SimController {
-            to_target,
-            from_target,
-        },
+        SimController { to_target },
         SimTarget {
             address,
-            state: Default::default(),
-            to_controller,
+            current_transaction: None,
             from_controller,
         },
     )
 }
 
-#[derive(Debug)]
-enum ControllerAction<A> {
-    Start,
-    Restart,
-    Stop,
-    Address { address: A, is_read: bool },
-    WriteByte(u8),
-    RequestByte,
-    AckRead,
+#[derive(Debug, PartialEq, Eq)]
+enum FooOperation {
+    Read(Vec<u8>),
+    Write(Vec<u8>),
 }
 
-#[derive(Debug)]
-enum TargetReaction {
-    AckAddress,
-    NackAddress,
-    AckWrite,
-    NackWrite,
-    ReadByte(u8),
+struct FooTransaction {
+    address: AnyAddress,
+    actions: Vec<FooOperation>,
 }
 
 /// Makes a [I2cTarget] usable as a [embedded-hal::i2c::I2c]
-pub struct SimController<A> {
-    to_target: Sender<ControllerAction<A>>,
-    from_target: Receiver<TargetReaction>,
+pub struct SimController {
+    to_target: Sender<(
+        FooTransaction,
+        oneshot::Sender<Result<FooTransaction, ErrorKind>>,
+    )>,
 }
 
-impl<A> SimController<A> {
-    async fn send(&mut self, action: ControllerAction<A>) {
-        self.to_target.send(action).await.unwrap();
-    }
-
-    async fn transact(&mut self, action: ControllerAction<A>) -> TargetReaction {
-        self.to_target.send(action).await.unwrap();
-        self.from_target.recv().await.unwrap()
-    }
-
-    async fn send_address(
-        &mut self,
-        address: A,
-        is_read: bool,
-    ) -> Result<(), <SimController<A> as ErrorType>::Error> {
-        let resp = self
-            .transact(ControllerAction::Address { address, is_read })
-            .await;
-
-        match resp {
-            TargetReaction::AckAddress => Ok(()),
-            TargetReaction::NackAddress => {
-                self.send(ControllerAction::Stop).await;
-                Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address))
-            }
-            TargetReaction::AckWrite | TargetReaction::NackWrite | TargetReaction::ReadByte(_) => {
-                unreachable!()
-            }
-        }?;
-        Ok(())
-    }
-
-    async fn handle_read(&mut self, address: A, buf: &mut [u8]) -> Result<(), ErrorKind> {
-        self.send_address(address, true).await?;
-
-        for b in buf {
-            let resp = self.transact(ControllerAction::RequestByte).await;
-            let TargetReaction::ReadByte(byte) = resp else {
-                unreachable!()
-            };
-            *b = byte;
-            self.send(ControllerAction::AckRead).await;
-        }
-
-        Ok(())
-    }
-
-    async fn handle_write(&mut self, address: A, buf: &[u8]) -> Result<(), ErrorKind> {
-        self.send_address(address, false).await?;
-
-        for b in buf {
-            let resp = self.transact(ControllerAction::WriteByte(*b)).await;
-            match resp {
-                TargetReaction::AckWrite => continue,
-                TargetReaction::NackWrite => {
-                    self.send(ControllerAction::Stop).await;
-                    return Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data));
-                }
-                TargetReaction::AckAddress
-                | TargetReaction::NackAddress
-                | TargetReaction::ReadByte(_) => {
-                    unreachable!()
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl<A> ErrorType for SimController<A> {
+impl ErrorType for SimController {
     type Error = ErrorKind;
 }
 
-impl<A: AddressMode + Copy> AsyncI2cController<A> for SimController<A> {
+impl<A> AsyncI2cController<A> for SimController
+where
+    A: AddressMode + Into<AnyAddress>,
+{
     async fn transaction(
         &mut self,
         address: A,
         operations: &mut [Operation<'_>],
     ) -> Result<(), Self::Error> {
-        let mut first = true;
-        for op in operations {
-            if first {
-                first = false;
-                self.send(ControllerAction::Start).await;
-            } else {
-                self.send(ControllerAction::Restart).await;
-            }
+        let address = address.into();
+        let actions = operations
+            .iter()
+            .map(|a| match a {
+                Operation::Read(r) => FooOperation::Read(vec![0; r.len()]),
+                Operation::Write(w) => FooOperation::Write(w.to_vec()),
+            })
+            .collect();
 
-            match op {
-                Operation::Read(buf) => {
-                    self.handle_read(address, buf).await?;
+        let transaction = FooTransaction { address, actions };
+        let (sender, receiver) = oneshot::channel();
+
+        self.to_target.try_send((transaction, sender)).unwrap();
+
+        let response = receiver.await.map_err(|_| ErrorKind::Other)?;
+        let actions = response?.actions;
+        for (op, reply) in operations.iter_mut().zip(actions) {
+            match (op, reply) {
+                (Operation::Read(buf), FooOperation::Read(response)) => {
+                    assert_eq!(buf.len(), response.len());
+                    buf.copy_from_slice(&response[..]);
                 }
-                Operation::Write(buf) => {
-                    self.handle_write(address, buf).await?;
-                }
+                (Operation::Write(_), FooOperation::Write(_)) => {}
+                _ => panic!("send operation does not matched received operation"),
             }
         }
-        self.send(ControllerAction::Stop).await;
 
         Ok(())
     }
 }
 
-pub struct SimTarget<A> {
-    address: A,
-    state: TargetState,
-    to_controller: Sender<TargetReaction>,
-    from_controller: Receiver<ControllerAction<A>>,
+struct PartialTransaction {
+    transaction: FooTransaction,
+    current_op: usize,
+    responder: oneshot::Sender<Result<FooTransaction, ErrorKind>>,
 }
 
-impl<A: core::fmt::Debug> SimTarget<A> {
-    async fn react(&mut self, action: TargetReaction) {
-        println!("C<T: {action:?}");
-        self.to_controller.send(action).await.unwrap();
-    }
-
-    async fn recv(&mut self) -> ControllerAction<A> {
-        let val = self.from_controller.recv().await.unwrap();
-        println!("C>T: {val:?}");
-        val
+impl
+    From<(
+        FooTransaction,
+        oneshot::Sender<Result<FooTransaction, ErrorKind>>,
+    )> for PartialTransaction
+{
+    fn from(
+        value: (
+            FooTransaction,
+            oneshot::Sender<Result<FooTransaction, ErrorKind>>,
+        ),
+    ) -> Self {
+        Self {
+            transaction: value.0,
+            current_op: 0,
+            responder: value.1,
+        }
     }
 }
 
-impl<A: AddressMode + PartialEq + core::fmt::Debug> I2cTarget<A> for SimTarget<A> {
+impl PartialTransaction {
+    fn current(&self) -> Option<&FooOperation> {
+        self.transaction.actions.get(self.current_op)
+    }
+    fn current_mut(&mut self) -> Option<&mut FooOperation> {
+        self.transaction.actions.get_mut(self.current_op)
+    }
+}
+
+pub struct SimTarget {
+    address: AnyAddress,
+    current_transaction: Option<PartialTransaction>,
+    from_controller: Receiver<(
+        FooTransaction,
+        oneshot::Sender<Result<FooTransaction, ErrorKind>>,
+    )>,
+}
+
+impl SimTarget {
+    fn nak(&mut self, src: NoAcknowledgeSource) {
+        let t = self
+            .current_transaction
+            .take()
+            .expect("Can only be done with error if there is a transaction");
+
+        let _ = t.responder.send(Err(ErrorKind::NoAcknowledge(src)));
+    }
+
+    fn next(&mut self) {
+        let inner = self
+            .current_transaction
+            .as_mut()
+            .expect("Can only be done with error if there is a transaction");
+        inner.current_op += 1;
+
+        if inner.current_op == inner.transaction.actions.len() {
+            let me = self.current_transaction.take().unwrap();
+            let _ = me.responder.send(Ok(me.transaction));
+        }
+    }
+}
+
+impl I2cTarget for SimTarget {
     type Error = ErrorKind;
-    type Read<'a> = OnRead<'a, A>;
-    type Write<'a> = OnWrite<'a, A>;
+    type Read<'a> = OnRead<'a>;
+    type Write<'a> = OnWrite<'a>;
 
     async fn listen(
         &mut self,
-    ) -> Result<Transaction<A, Self::Read<'_>, Self::Write<'_>>, Self::Error> {
+    ) -> Result<Transaction<Self::Read<'_>, Self::Write<'_>>, Self::Error> {
         loop {
-            match (self.state.clone(), self.recv().await) {
-                (TargetState::WaitForStart, ControllerAction::Start) => {
-                    self.state = TargetState::WaitForAddress;
+            let current = match &mut self.current_transaction {
+                Some(current) => current,
+                None => {
+                    let new = self.from_controller.recv().await.ok_or(ErrorKind::Other)?;
+                    let partial: PartialTransaction = new.into();
+
+                    if self.address != partial.transaction.address {
+                        let error = ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address);
+                        let _ = partial.responder.send(Err(error));
+                        continue;
+                    }
+
+                    self.current_transaction.insert(partial)
+                }
+            };
+
+            let address = current.transaction.address;
+
+            match current.current_mut() {
+                None => {
+                    // We are done with this one wait for the next
+                    let self1 = self.current_transaction.take().unwrap();
+                    assert_eq!(self1.current_op, self1.transaction.actions.len());
+                    let _ = self1.responder.send(Ok(self1.transaction));
                     continue;
                 }
-                (TargetState::WaitForAddress, ControllerAction::Address { address, .. })
-                    if address != self.address =>
-                {
-                    self.state = TargetState::WaitForStop;
-                    self.react(TargetReaction::NackAddress).await;
-                    continue;
-                }
-                (TargetState::WaitForAddress, ControllerAction::Address { address, is_read }) => {
-                    self.state = TargetState::InTransaction;
-                    return Ok(if is_read {
-                        Transaction::ReadTransaction {
-                            address,
-                            handler: OnRead::new(self),
-                        }
-                    } else {
-                        Transaction::WriteTransaction {
-                            address,
-                            handler: OnWrite::new(self),
-                        }
+                Some(FooOperation::Read(_)) => {
+                    return Ok(Transaction::ReadTransaction {
+                        address,
+                        handler: OnRead::new(self),
                     });
                 }
-                (
-                    TargetState::InTransaction | TargetState::WaitForStop,
-                    ControllerAction::Restart,
-                ) => {
-                    self.state = TargetState::WaitForAddress;
-                }
-                (TargetState::InTransaction | TargetState::WaitForStop, ControllerAction::Stop) => {
-                    self.state = TargetState::WaitForStart;
-                }
-                unexpected => {
-                    panic!("Unexpected ControllerAction for State: {:?}", unexpected)
+                Some(FooOperation::Write(_)) => {
+                    return Ok(Transaction::WriteTransaction {
+                        address,
+                        handler: OnWrite::new(self),
+                    });
                 }
             }
         }
     }
 }
 
-pub struct OnRead<'a, A: core::fmt::Debug> {
-    inner: &'a mut SimTarget<A>,
-    ack_sent: bool,
+pub struct OnRead<'a> {
+    inner: &'a mut SimTarget,
+    bytes_filled: usize,
+    did_start: bool,
 }
 
-impl<'a, A: core::fmt::Debug> OnRead<'a, A> {
+impl<'a> OnRead<'a> {
     const FILL: u8 = 0x2a;
 
-    const fn new(inner: &'a mut SimTarget<A>) -> Self {
+    const fn new(inner: &'a mut SimTarget) -> Self {
         Self {
             inner,
-            ack_sent: false,
+            bytes_filled: 0,
+            did_start: false,
         }
     }
 
-    async fn send_byte(&mut self, byte: u8) -> Result<(), ()> {
-        if !self.ack_sent {
-            self.inner.react(TargetReaction::AckAddress).await;
-            self.ack_sent = true;
-        }
-
-        match self.inner.recv().await {
-            ControllerAction::RequestByte => {}
-            ControllerAction::Restart => {
-                self.inner.state = TargetState::WaitForAddress;
-                return Err(());
-            }
-            ControllerAction::Stop => {
-                self.inner.state = TargetState::WaitForStart;
-                return Err(());
-            }
-            unexpected => {
-                panic!(
-                    "Controller sent unexpected {unexpected:?} in response to a read instead of an ACK/NACK"
-                )
-            }
-        }
-
-        self.inner.react(TargetReaction::ReadByte(byte)).await;
-
-        match self.inner.recv().await {
-            ControllerAction::AckRead => Ok(()),
-            ControllerAction::Restart => {
-                self.inner.state = TargetState::WaitForAddress;
-                Err(())
-            }
-            ControllerAction::Stop => {
-                self.inner.state = TargetState::WaitForStart;
-                Err(())
-            }
-            unexpected => {
-                panic!(
-                    "Controller sent unexpected {unexpected:?} in response to a read instead of an ACK/NACK"
-                )
-            }
-        }
+    fn current_op_mut(&mut self) -> &mut FooOperation {
+        self.inner
+            .current_transaction
+            .as_mut()
+            .and_then(PartialTransaction::current_mut)
+            .expect("If we are in OnRead we must have a transaction ongoing")
     }
 
-    const fn defuse(self) {
-        let _ = ManuallyDrop::new(self);
-    }
+    fn remaining(&mut self) -> &mut [u8] {
+        let bytes_filled = self.bytes_filled;
+        let op = self.current_op_mut();
 
-    async fn handle_rest(&mut self) {
-        if !self.ack_sent {
-            self.inner.react(TargetReaction::NackAddress).await;
-            self.inner.state = TargetState::WaitForStop;
-        } else {
-            while let Ok(()) = self.send_byte(Self::FILL).await {}
-        }
+        let buf = match op {
+            FooOperation::Read(buf) => buf,
+            unexpected => panic!("Got a {unexpected:?} in OnRead"),
+        };
+
+        &mut buf[bytes_filled..]
     }
 }
 
-impl<A: core::fmt::Debug> Drop for OnRead<'_, A> {
+impl Drop for OnRead<'_> {
     fn drop(&mut self) {
-        panic!("Do not drop Read handles!");
+        if !self.did_start {
+            self.inner.nak(NoAcknowledgeSource::Address);
+        } else {
+            self.remaining().fill(Self::FILL);
+            self.inner.next()
+        }
     }
 }
 
-impl<A: core::fmt::Debug> ReadTransaction for OnRead<'_, A> {
+impl ReadTransaction for OnRead<'_> {
     type Error = ErrorKind;
 
     async fn handle_part(mut self, buffer: &[u8]) -> Result<ReadResult<Self>, Self::Error> {
-        for (idx, b) in buffer.iter().enumerate() {
-            match self.send_byte(*b).await {
-                Ok(()) => continue,
-                Err(()) => {
-                    // Avoid sending more data in `drop()`
-                    self.defuse();
+        self.did_start = true;
+        let target = self.remaining();
 
-                    // TODO check for of-by-one
-                    return Ok(ReadResult::Finished(idx));
-                }
-            }
+        let len = min(target.len(), buffer.len());
+        target[..len].copy_from_slice(&buffer[..len]);
+        self.bytes_filled += len;
+
+        if self.remaining().is_empty() {
+            Ok(ReadResult::Finished(len))
+        } else {
+            Ok(ReadResult::PartialComplete(self))
         }
-
-        Ok(ReadResult::PartialComplete(self))
-    }
-
-    async fn done(mut self) {
-        self.handle_rest().await;
-
-        // Inhibit drop calling defuse_inner again
-        self.defuse();
     }
 }
 
-pub struct OnWrite<'a, A> {
-    inner: &'a mut SimTarget<A>,
-    ack_sent: bool,
+pub struct OnWrite<'a> {
+    inner: &'a mut SimTarget,
+    bytes_read: usize,
+    did_start: bool,
 }
 
-impl<'a, A: core::fmt::Debug> OnWrite<'a, A> {
-    const fn new(inner: &'a mut SimTarget<A>) -> Self {
+impl<'a> OnWrite<'a> {
+    const fn new(inner: &'a mut SimTarget) -> Self {
         Self {
             inner,
-            ack_sent: false,
+            bytes_read: 0,
+            did_start: false,
         }
     }
 
-    async fn recv_byte(&mut self) -> Result<u8, ()> {
-        if !self.ack_sent {
-            self.inner.react(TargetReaction::AckAddress).await;
-            self.ack_sent = true;
-        }
-
-        match self.inner.recv().await {
-            ControllerAction::WriteByte(byte) => {
-                self.inner.react(TargetReaction::AckWrite).await;
-                Ok(byte)
-            }
-            ControllerAction::Restart => {
-                self.inner.state = TargetState::WaitForAddress;
-                Err(())
-            }
-            ControllerAction::Stop => {
-                self.inner.state = TargetState::WaitForStart;
-                Err(())
-            }
-            action @ (ControllerAction::Start
-            | ControllerAction::Address { .. }
-            | ControllerAction::RequestByte
-            | ControllerAction::AckRead) => {
-                panic!("Illegal controller action during write operation: {action:?}")
-            }
-        }
+    fn current_op(&self) -> &FooOperation {
+        self.inner
+            .current_transaction
+            .as_ref()
+            .and_then(PartialTransaction::current)
+            .expect("If we are in OnWrite we must have a transaction ongoing")
     }
 
-    const fn defuse(self) {
-        let _ = ManuallyDrop::new(self);
-    }
+    fn remaining(&self) -> &[u8] {
+        let op = self.current_op();
 
-    async fn done_inner(&mut self) {
-        if !self.ack_sent {
-            self.inner.react(TargetReaction::NackAddress).await;
-            self.inner.state = TargetState::WaitForStop;
-        } else {
-            match self.inner.recv().await {
-                ControllerAction::WriteByte(_) => {
-                    self.inner.react(TargetReaction::NackWrite).await;
-                    self.inner.state = TargetState::WaitForStop;
-                }
-                ControllerAction::Restart => {
-                    self.inner.state = TargetState::WaitForAddress;
-                }
-                ControllerAction::Stop => {
-                    self.inner.state = TargetState::WaitForStart;
-                }
-                action @ (ControllerAction::Start
-                | ControllerAction::Address { .. }
-                | ControllerAction::RequestByte
-                | ControllerAction::AckRead) => {
-                    panic!("Illegal controller action during after-write nacking: {action:?}")
-                }
-            }
-        }
+        let buf = match op {
+            FooOperation::Write(buf) => buf,
+            unexpected => panic!("Got a {unexpected:?} in OnWrite"),
+        };
+
+        &buf[self.bytes_read..]
     }
 }
 
-impl<A> Drop for OnWrite<'_, A> {
+impl Drop for OnWrite<'_> {
     fn drop(&mut self) {
-        panic!("Do not drop Write handles!");
+        if !self.did_start {
+            self.inner.nak(NoAcknowledgeSource::Address);
+        } else if !self.remaining().is_empty() {
+            self.inner.nak(NoAcknowledgeSource::Data);
+        } else {
+            self.inner.next()
+        }
     }
 }
 
-impl<A: core::fmt::Debug> WriteTransaction for OnWrite<'_, A> {
+impl WriteTransaction for OnWrite<'_> {
     type Error = ErrorKind;
 
     async fn handle_part(mut self, buffer: &mut [u8]) -> Result<WriteResult<Self>, Self::Error> {
-        let mut filled = 0;
-        for b in buffer {
-            match self.recv_byte().await {
-                Ok(byte) => {
-                    *b = byte;
-                    filled += 1;
-                }
-                Err(()) => {
-                    self.defuse();
-                    return Ok(WriteResult::Finished(filled));
-                }
-            }
+        self.did_start = true;
+        let source = self.remaining();
+
+        let len = min(source.len(), buffer.len());
+        buffer[..len].copy_from_slice(&source[..len]);
+        self.bytes_read += len;
+
+        if self.remaining().is_empty() {
+            Ok(WriteResult::Finished(len))
+        } else {
+            Ok(WriteResult::PartialComplete(self))
         }
-
-        Ok(WriteResult::PartialComplete(self))
     }
-
-    async fn done(mut self) {
-        self.done_inner().await;
-        self.defuse();
-    }
-}
-
-#[derive(Debug, Default, Clone)]
-enum TargetState {
-    #[default]
-    WaitForStart,
-    WaitForAddress,
-    WaitForStop,
-    InTransaction,
 }
 
 #[cfg(test)]
