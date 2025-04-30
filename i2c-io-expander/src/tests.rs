@@ -42,7 +42,7 @@ pub async fn server(i2c: impl I2cTarget, stop: Arc<AtomicBool>) {
 #[cfg(test)]
 mod test_locally {
     use super::*;
-    use embedded_hal_i2c::{AnyAddress, AsyncI2cController};
+    use embedded_hal_i2c::AsyncI2cController;
     use std::sync::atomic::Ordering;
     use tokio::join;
 
