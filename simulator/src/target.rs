@@ -93,13 +93,13 @@ impl I2cTarget for SimTarget {
                     continue;
                 }
                 Some(SimOp::Read(_)) => {
-                    return Ok(Transaction::ReadTransaction {
+                    return Ok(Transaction::Read {
                         address,
                         handler: OnRead::new(self),
                     });
                 }
                 Some(SimOp::Write(_)) => {
-                    return Ok(Transaction::WriteTransaction {
+                    return Ok(Transaction::Write {
                         address,
                         handler: OnWrite::new(self),
                     });
@@ -238,9 +238,9 @@ impl WriteTransaction for OnWrite<'_> {
         self.bytes_read += len;
 
         if self.remaining().is_empty() {
-            Ok(WriteResult::Finished(len))
+            Ok(WriteResult::Complete(len))
         } else {
-            Ok(WriteResult::PartialComplete(self))
+            Ok(WriteResult::Partial(self))
         }
     }
 }

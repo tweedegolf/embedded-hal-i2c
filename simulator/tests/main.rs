@@ -21,7 +21,7 @@ async fn write_read() {
     };
 
     let target = async move {
-        let Transaction::WriteTransaction { address, handler } = t.listen().await.unwrap() else {
+        let Transaction::Write { address, handler } = t.listen().await.unwrap() else {
             panic!()
         };
 
@@ -31,7 +31,7 @@ async fn write_read() {
         assert_eq!(written, 4);
         assert_eq!(buffer, [1, 2, 3, 4]);
 
-        let Transaction::ReadTransaction { address, handler } = t.listen().await.unwrap() else {
+        let Transaction::Read { address, handler } = t.listen().await.unwrap() else {
             panic!()
         };
         assert_eq!(address, ADDR);
@@ -64,19 +64,19 @@ async fn nacking_everything() {
     };
 
     let target = async move {
-        let Transaction::ReadTransaction { address, handler } = t.listen().await.unwrap() else {
+        let Transaction::Read { address, handler } = t.listen().await.unwrap() else {
             panic!()
         };
         assert_eq!(address, ADDR);
         drop(handler);
 
-        let Transaction::WriteTransaction { address, handler } = t.listen().await.unwrap() else {
+        let Transaction::Write { address, handler } = t.listen().await.unwrap() else {
             panic!()
         };
         assert_eq!(address, ADDR);
         drop(handler);
 
-        let Transaction::WriteTransaction { address, handler } = t.listen().await.unwrap() else {
+        let Transaction::Write { address, handler } = t.listen().await.unwrap() else {
             panic!()
         };
         assert_eq!(address, ADDR);
@@ -113,8 +113,7 @@ async fn long_transation() {
 
     let target = async move {
         for expect in [1, 2] {
-            let Transaction::WriteTransaction { address, handler } = t.listen().await.unwrap()
-            else {
+            let Transaction::Write { address, handler } = t.listen().await.unwrap() else {
                 panic!()
             };
             assert_eq!(address, ADDR);
@@ -124,8 +123,7 @@ async fn long_transation() {
         }
 
         for expect in [3, 4] {
-            let Transaction::ReadTransaction { address, handler } = t.listen().await.unwrap()
-            else {
+            let Transaction::Read { address, handler } = t.listen().await.unwrap() else {
                 panic!()
             };
             assert_eq!(address, ADDR);
@@ -136,8 +134,7 @@ async fn long_transation() {
         }
 
         for expect in [5, 6] {
-            let Transaction::WriteTransaction { address, handler } = t.listen().await.unwrap()
-            else {
+            let Transaction::Write { address, handler } = t.listen().await.unwrap() else {
                 panic!()
             };
             assert_eq!(address, ADDR);

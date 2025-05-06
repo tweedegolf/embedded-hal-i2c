@@ -23,7 +23,7 @@
 //! };
 //!
 //! let target_task = async move {
-//!     let Ok(Transaction::WriteTransaction { address, handler }) = target.listen().await else {
+//!     let Ok(Transaction::Write { address, handler }) = target.listen().await else {
 //!         unreachable!()
 //!     };
 //!     assert_eq!(address, AnyAddress::Seven(42));
@@ -31,7 +31,7 @@
 //!     let len = handler.handle_complete(&mut data).await.unwrap();
 //!     assert_eq!(&data[..len], &0xdeadbeef_u32.to_be_bytes());
 //!
-//!     let Ok(Transaction::ReadTransaction { address, handler }) = target.listen().await else {
+//!     let Ok(Transaction::Read { address, handler }) = target.listen().await else {
 //!         unreachable!()
 //!     };
 //!     let response = 0xc0ffee00_u32.to_be_bytes();
