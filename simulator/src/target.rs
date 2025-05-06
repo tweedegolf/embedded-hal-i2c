@@ -2,8 +2,8 @@
 
 use crate::{PartialTransaction, SimOp};
 use embedded_hal_i2c::{
-    AnyAddress, ErrorKind, I2cTarget, NoAcknowledgeSource, ReadResult, ReadTransaction,
-    Transaction, WriteResult, WriteTransaction,
+    ErrorKind, I2cTarget, NoAcknowledgeSource, ReadResult, ReadTransaction, Transaction,
+    WriteResult, WriteTransaction,
 };
 use std::cmp::min;
 use tokio::sync::mpsc::Receiver;
@@ -18,18 +18,13 @@ use crate::controller::SimController;
 /// and [`WriteTransaction::handle_part`] calls on this target are forwarded
 /// to back to the controller as if there was a real I2C bus connecting the two.
 pub struct SimTarget {
-    address: AnyAddress,
     current_transaction: Option<PartialTransaction>,
     from_controller: Receiver<PartialTransaction>,
 }
 
 impl SimTarget {
-    pub(crate) const fn new(
-        address: AnyAddress,
-        from_controller: Receiver<PartialTransaction>,
-    ) -> Self {
+    pub(crate) const fn new(from_controller: Receiver<PartialTransaction>) -> Self {
         Self {
-            address,
             current_transaction: None,
             from_controller,
         }
@@ -50,11 +45,6 @@ impl SimTarget {
             .as_mut()
             .expect("Can only be done with error if there is a transaction");
         inner.current_op += 1;
-
-        if inner.current_op == inner.transaction.actions.len() {
-            let me = self.current_transaction.take().unwrap();
-            let _ = me.responder.send(Ok(me.transaction));
-        }
     }
 }
 
@@ -66,46 +56,35 @@ impl I2cTarget for SimTarget {
     async fn listen(
         &mut self,
     ) -> Result<Transaction<Self::Read<'_>, Self::Write<'_>>, Self::Error> {
-        loop {
-            let current = match &mut self.current_transaction {
-                Some(current) => current,
-                None => {
-                    let new = self.from_controller.recv().await.ok_or(ErrorKind::Other)?;
-
-                    if self.address != new.transaction.address {
-                        let error = ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address);
-                        let _ = new.responder.send(Err(error));
-                        continue;
-                    }
-
-                    self.current_transaction.insert(new)
-                }
-            };
-
-            let address = current.transaction.address;
-
-            match current.current_mut() {
-                None => {
-                    // We are done with this one wait for the next
-                    let self1 = self.current_transaction.take().unwrap();
-                    assert_eq!(self1.current_op, self1.transaction.actions.len());
-                    let _ = self1.responder.send(Ok(self1.transaction));
-                    continue;
-                }
-                Some(SimOp::Read(_)) => {
-                    return Ok(Transaction::Read {
-                        address,
-                        handler: OnRead::new(self),
-                    });
-                }
-                Some(SimOp::Write(_)) => {
-                    return Ok(Transaction::Write {
-                        address,
-                        handler: OnWrite::new(self),
-                    });
-                }
+        let current = match &mut self.current_transaction {
+            Some(current) => current,
+            None => {
+                let new = self.from_controller.recv().await.ok_or(ErrorKind::Other)?;
+                println!("New transaction: {:?}", new.transaction);
+                self.current_transaction.insert(new)
             }
-        }
+        };
+
+        let address = current.transaction.address;
+
+        Ok(match current.current_mut() {
+            None => {
+                // We are done with this one wait for the next
+                let done = self.current_transaction.take().unwrap();
+                assert_eq!(done.current_op, done.transaction.actions.len());
+                println!("Done transaction: {:?}", done.transaction);
+                let _ = done.responder.send(Ok(done.transaction));
+                Transaction::Deselect
+            }
+            Some(SimOp::Read(_)) => Transaction::Read {
+                address,
+                handler: OnRead::new(self),
+            },
+            Some(SimOp::Write(_)) => Transaction::Write {
+                address,
+                handler: OnWrite::new(self),
+            },
+        })
     }
 }
 

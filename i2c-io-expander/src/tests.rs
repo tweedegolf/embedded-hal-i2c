@@ -50,7 +50,7 @@ mod test_locally {
 
     #[tokio::test]
     async fn works_locally() {
-        let (mut cont, target) = simulator::simulator(A7.into());
+        let (mut cont, target) = simulator::simulator();
 
         let stop = Arc::new(AtomicBool::new(false));
         let server_fut = server(target, Arc::clone(&stop));
@@ -83,7 +83,7 @@ mod test_locally {
 
     #[tokio::test]
     async fn too_short_is_ignored() {
-        let (mut cont, target) = simulator::simulator(A7.into());
+        let (mut cont, target) = simulator::simulator();
 
         let stop = Arc::new(AtomicBool::new(false));
         let server_fut = server(target, Arc::clone(&stop));
@@ -107,7 +107,7 @@ mod test_locally {
 
     #[tokio::test]
     async fn overreading_is_filled() {
-        let (mut cont, target) = simulator::simulator(A7.into());
+        let (mut cont, target) = simulator::simulator();
 
         let stop = Arc::new(AtomicBool::new(false));
         let server_fut = server(target, Arc::clone(&stop));

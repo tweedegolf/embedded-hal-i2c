@@ -9,7 +9,7 @@ const ADDR: AnyAddress = AnyAddress::Seven(A7);
 
 #[tokio::test]
 async fn write_read() {
-    let (mut c, mut t) = simulator(ADDR);
+    let (mut c, mut t) = simulator();
 
     let control = async move {
         let mut response = [0; 8];
@@ -44,7 +44,7 @@ async fn write_read() {
 
 #[tokio::test]
 async fn nacking_everything() {
-    let (mut c, mut t) = simulator(ADDR);
+    let (mut c, mut t) = simulator();
 
     let control = async move {
         let result = c.read(A7, &mut []).await.unwrap_err();
@@ -91,7 +91,7 @@ async fn nacking_everything() {
 
 #[tokio::test]
 async fn long_transation() {
-    let (mut c, mut t) = simulator(ADDR);
+    let (mut c, mut t) = simulator();
 
     let control = async move {
         let mut a = [0];

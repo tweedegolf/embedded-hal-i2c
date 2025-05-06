@@ -61,12 +61,12 @@ pub mod target;
 ///
 /// The returned [`SimController`] implements the `embedded-hal` trait for I2C.
 /// And the [`SimTarget`] implements the new target traits from `embedded-hal-i2c`.
-pub fn simulator(address: AnyAddress) -> (SimController, SimTarget) {
+pub fn simulator() -> (SimController, SimTarget) {
     let (to_target, from_controller) = channel(1);
 
     (
         SimController::new(to_target),
-        SimTarget::new(address, from_controller),
+        SimTarget::new(from_controller),
     )
 }
 
@@ -76,11 +76,13 @@ enum SimOp {
     Write(Vec<u8>),
 }
 
+#[derive(Debug, PartialEq, Eq)]
 struct SimTransaction {
     address: AnyAddress,
     actions: Vec<SimOp>,
 }
 
+#[derive(Debug)]
 struct PartialTransaction {
     transaction: SimTransaction,
     current_op: usize,
