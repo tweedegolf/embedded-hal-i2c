@@ -1,3 +1,9 @@
+#![warn(missing_docs)]
+
+//! This crate provides an implementation of [`I2cTarget`] that can be run locally.
+//!
+//!
+
 use embedded_hal_i2c::{
     AddressMode, AnyAddress, AsyncI2cController, ErrorKind, ErrorType, I2cTarget,
     NoAcknowledgeSource, Operation, ReadResult, ReadTransaction, Transaction, WriteResult,
@@ -7,6 +13,10 @@ use std::cmp::min;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::sync::oneshot;
 
+/// Create an I2C controller and target pair
+///
+/// The returned [`SimController`] implements the `embedded-hal` trait for I2C.
+/// And the [`SimTarget`] implements the new target traits from `embedded-hal-i2c`.
 pub fn simulator(address: AnyAddress) -> (SimController, SimTarget) {
     let (to_target, from_controller) = channel(1);
 
@@ -21,21 +31,25 @@ pub fn simulator(address: AnyAddress) -> (SimController, SimTarget) {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum FooOperation {
+enum SimOp {
     Read(Vec<u8>),
     Write(Vec<u8>),
 }
 
-struct FooTransaction {
+struct SimTransaction {
     address: AnyAddress,
-    actions: Vec<FooOperation>,
+    actions: Vec<SimOp>,
 }
 
-/// Makes a [I2cTarget] usable as a [embedded-hal::i2c::I2c]
+/// Simulated I2C controller
+///
+/// This can be created with [`simulator`], which also returns the linked [`SimTarget`].
+/// All [`transaction`] calls on this controller are forwarded to the target
+/// as if there was a real I2C bus connecting the two.
 pub struct SimController {
     to_target: Sender<(
-        FooTransaction,
-        oneshot::Sender<Result<FooTransaction, ErrorKind>>,
+        SimTransaction,
+        oneshot::Sender<Result<SimTransaction, ErrorKind>>,
     )>,
 }
 
@@ -56,12 +70,12 @@ where
         let actions = operations
             .iter()
             .map(|a| match a {
-                Operation::Read(r) => FooOperation::Read(vec![0; r.len()]),
-                Operation::Write(w) => FooOperation::Write(w.to_vec()),
+                Operation::Read(r) => SimOp::Read(vec![0; r.len()]),
+                Operation::Write(w) => SimOp::Write(w.to_vec()),
             })
             .collect();
 
-        let transaction = FooTransaction { address, actions };
+        let transaction = SimTransaction { address, actions };
         let (sender, receiver) = oneshot::channel();
 
         self.to_target.try_send((transaction, sender)).unwrap();
@@ -70,11 +84,11 @@ where
         let actions = response?.actions;
         for (op, reply) in operations.iter_mut().zip(actions) {
             match (op, reply) {
-                (Operation::Read(buf), FooOperation::Read(response)) => {
+                (Operation::Read(buf), SimOp::Read(response)) => {
                     assert_eq!(buf.len(), response.len());
                     buf.copy_from_slice(&response[..]);
                 }
-                (Operation::Write(_), FooOperation::Write(_)) => {}
+                (Operation::Write(_), SimOp::Write(_)) => {}
                 _ => panic!("send operation does not matched received operation"),
             }
         }
@@ -84,21 +98,21 @@ where
 }
 
 struct PartialTransaction {
-    transaction: FooTransaction,
+    transaction: SimTransaction,
     current_op: usize,
-    responder: oneshot::Sender<Result<FooTransaction, ErrorKind>>,
+    responder: oneshot::Sender<Result<SimTransaction, ErrorKind>>,
 }
 
 impl
     From<(
-        FooTransaction,
-        oneshot::Sender<Result<FooTransaction, ErrorKind>>,
+        SimTransaction,
+        oneshot::Sender<Result<SimTransaction, ErrorKind>>,
     )> for PartialTransaction
 {
     fn from(
         value: (
-            FooTransaction,
-            oneshot::Sender<Result<FooTransaction, ErrorKind>>,
+            SimTransaction,
+            oneshot::Sender<Result<SimTransaction, ErrorKind>>,
         ),
     ) -> Self {
         Self {
@@ -110,20 +124,25 @@ impl
 }
 
 impl PartialTransaction {
-    fn current(&self) -> Option<&FooOperation> {
+    fn current(&self) -> Option<&SimOp> {
         self.transaction.actions.get(self.current_op)
     }
-    fn current_mut(&mut self) -> Option<&mut FooOperation> {
+    fn current_mut(&mut self) -> Option<&mut SimOp> {
         self.transaction.actions.get_mut(self.current_op)
     }
 }
 
+/// Simulated I2C target
+///
+/// This can be created with [`simulator`], which also returns the linked [`SimController`].
+/// All [`listen`], [`Read::handle_part`], and [`Write::handle_part`] calls on this target are
+/// forwarded to back to the controller as if there was a real I2C bus connecting the two.
 pub struct SimTarget {
     address: AnyAddress,
     current_transaction: Option<PartialTransaction>,
     from_controller: Receiver<(
-        FooTransaction,
-        oneshot::Sender<Result<FooTransaction, ErrorKind>>,
+        SimTransaction,
+        oneshot::Sender<Result<SimTransaction, ErrorKind>>,
     )>,
 }
 
@@ -186,13 +205,13 @@ impl I2cTarget for SimTarget {
                     let _ = self1.responder.send(Ok(self1.transaction));
                     continue;
                 }
-                Some(FooOperation::Read(_)) => {
+                Some(SimOp::Read(_)) => {
                     return Ok(Transaction::ReadTransaction {
                         address,
                         handler: OnRead::new(self),
                     });
                 }
-                Some(FooOperation::Write(_)) => {
+                Some(SimOp::Write(_)) => {
                     return Ok(Transaction::WriteTransaction {
                         address,
                         handler: OnWrite::new(self),
@@ -203,6 +222,7 @@ impl I2cTarget for SimTarget {
     }
 }
 
+/// Read transaction handler for [`SimTarget`]
 pub struct OnRead<'a> {
     inner: &'a mut SimTarget,
     bytes_filled: usize,
@@ -220,7 +240,7 @@ impl<'a> OnRead<'a> {
         }
     }
 
-    fn current_op_mut(&mut self) -> &mut FooOperation {
+    fn current_op_mut(&mut self) -> &mut SimOp {
         self.inner
             .current_transaction
             .as_mut()
@@ -233,7 +253,7 @@ impl<'a> OnRead<'a> {
         let op = self.current_op_mut();
 
         let buf = match op {
-            FooOperation::Read(buf) => buf,
+            SimOp::Read(buf) => buf,
             unexpected => panic!("Got a {unexpected:?} in OnRead"),
         };
 
@@ -271,6 +291,7 @@ impl ReadTransaction for OnRead<'_> {
     }
 }
 
+/// Write transaction handler for [`SimTarget`]
 pub struct OnWrite<'a> {
     inner: &'a mut SimTarget,
     bytes_read: usize,
@@ -286,7 +307,7 @@ impl<'a> OnWrite<'a> {
         }
     }
 
-    fn current_op(&self) -> &FooOperation {
+    fn current_op(&self) -> &SimOp {
         self.inner
             .current_transaction
             .as_ref()
@@ -298,7 +319,7 @@ impl<'a> OnWrite<'a> {
         let op = self.current_op();
 
         let buf = match op {
-            FooOperation::Write(buf) => buf,
+            SimOp::Write(buf) => buf,
             unexpected => panic!("Got a {unexpected:?} in OnWrite"),
         };
 
