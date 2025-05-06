@@ -2,7 +2,50 @@
 
 //! This crate provides an implementation of [`I2cTarget`] that can be run locally.
 //!
+//! # Example
+//! ```rust
+//! use embedded_hal_i2c::AnyAddress;
+//! use simulator::simulator;
 //!
+//! # #[tokio::main(flavor = "current_thread")]
+//! # async fn main() {
+//! use embedded_hal_i2c::{
+//!     AsyncI2cController, I2cTarget, ReadTransaction, Transaction, WriteTransaction,
+//! };
+//! use std::time::Duration;
+//! let (mut controller, mut target) = simulator(AnyAddress::Seven(42));
+//!
+//! let controller_task = async move {
+//!     let mut response = [0; 5];
+//!     controller
+//!         .write_read(42_u8, &0xdeadbeef_u32.to_be_bytes(), &mut response)
+//!         .await
+//!         .unwrap();
+//!     assert_eq!(response, [0xc0, 0xff, 0xee, 0x00, 0xff]);
+//! };
+//!
+//! let target_task = async move {
+//!     let Ok(Transaction::WriteTransaction { address, handler }) = target.listen().await else {
+//!         unreachable!()
+//!     };
+//!     assert_eq!(address, AnyAddress::Seven(42));
+//!     let mut data = [0; 4];
+//!     let len = handler.handle_complete(&mut data).await.unwrap();
+//!     assert_eq!(&data[..len], &0xdeadbeef_u32.to_be_bytes());
+//!
+//!     let Ok(Transaction::ReadTransaction { address, handler }) = target.listen().await else {
+//!         unreachable!()
+//!     };
+//!     let response = 0xc0ffee00_u32.to_be_bytes();
+//!     assert_eq!(address, AnyAddress::Seven(42));
+//!     handler.handle_complete(&response, 0xff).await.unwrap();
+//! };
+//!
+//! # tokio::time::timeout(Duration::from_secs(1), async move {
+//! tokio::join!(controller_task, target_task);
+//! # }).await.unwrap();
+//! # }
+//! ```
 
 use controller::SimController;
 use embedded_hal_i2c::{AnyAddress, ErrorKind};
@@ -10,8 +53,11 @@ use target::SimTarget;
 use tokio::sync::mpsc::channel;
 use tokio::sync::oneshot;
 
+#[cfg(doc)]
+use embedded_hal_i2c::I2cTarget;
+
 pub mod controller;
-mod target;
+pub mod target;
 
 /// Create an I2C controller and target pair
 ///
