@@ -1,0 +1,12 @@
+[package]
+name = "i2c-ram"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+embedded-hal-i2c = { path = "../embedded-hal-i2c" }
+log = "0.4.27"
+
+[dev-dependencies]
+simulator = { path = "../simulator" }
+tokio = { version = "1.44.2", features = ["rt", "macros"] }
