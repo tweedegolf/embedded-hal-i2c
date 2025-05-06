@@ -1,3 +1,5 @@
+//! Implementation of the target half of the simulator
+
 use crate::{PartialTransaction, SimOp};
 use embedded_hal_i2c::{
     AnyAddress, ErrorKind, I2cTarget, NoAcknowledgeSource, ReadResult, ReadTransaction,
@@ -6,11 +8,15 @@ use embedded_hal_i2c::{
 use std::cmp::min;
 use tokio::sync::mpsc::Receiver;
 
+#[cfg(doc)]
+use crate::controller::SimController;
+
 /// Simulated I2C target
 ///
 /// This can be created with [`crate::simulator`], which also returns the linked [`SimController`].
-/// All [`listen`], [`Read::handle_part`], and [`Write::handle_part`] calls on this target are
-/// forwarded to back to the controller as if there was a real I2C bus connecting the two.
+/// All [`I2cTarget::listen`], [`ReadTransaction::handle_part`],
+/// and [`WriteTransaction::handle_part`] calls on this target are forwarded
+/// to back to the controller as if there was a real I2C bus connecting the two.
 pub struct SimTarget {
     address: AnyAddress,
     current_transaction: Option<PartialTransaction>,

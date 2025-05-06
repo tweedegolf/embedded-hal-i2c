@@ -8,4 +8,4 @@ embedded-hal-i2c = { path = "../embedded-hal-i2c" }
 tokio = { version = "1.44.2", features = ["sync"] }
 
 [dev-dependencies]
-tokio = { version = "1.44.2", features = ["rt", "macros"] }
+tokio = { version = "1.44.2", features = ["rt", "macros", "time"] }

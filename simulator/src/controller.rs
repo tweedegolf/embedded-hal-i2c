@@ -7,10 +7,13 @@ use embedded_hal_i2c::{
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 
+#[cfg(doc)]
+use crate::target::SimTarget;
+
 /// Simulated I2C controller
 ///
 /// This can be created with [`crate::simulator`], which also returns the linked [`SimTarget`].
-/// All [`transaction`] calls on this controller are forwarded to the target
+/// All [`AsyncI2cController::transaction`] calls on this controller are forwarded to the target
 /// as if there was a real I2C bus connecting the two.
 pub struct SimController {
     to_target: Sender<PartialTransaction>,
