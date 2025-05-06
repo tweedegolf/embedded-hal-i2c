@@ -1,14 +1,14 @@
 //! Controller half implementation of the simulator
 
+#[cfg(doc)]
+use crate::target::SimTarget;
 use crate::{PartialTransaction, SimOp, SimTransaction};
 use embedded_hal_i2c::{
-    AddressMode, AnyAddress, AsyncI2cController, ErrorKind, ErrorType, Operation,
+    AddressMode, AnyAddress, AsyncI2cController, ErrorKind, ErrorType, Operation, SyncI2cController,
 };
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
-
-#[cfg(doc)]
-use crate::target::SimTarget;
+use tokio::sync::oneshot::Receiver;
 
 /// Simulated I2C controller
 ///
@@ -29,16 +29,12 @@ impl ErrorType for SimController {
     type Error = ErrorKind;
 }
 
-impl<A> AsyncI2cController<A> for SimController
-where
-    A: AddressMode + Into<AnyAddress>,
-{
-    async fn transaction(
+impl SimController {
+    fn send_transaction(
         &mut self,
-        address: A,
-        operations: &mut [Operation<'_>],
-    ) -> Result<(), Self::Error> {
-        let address = address.into();
+        address: AnyAddress,
+        operations: &mut [Operation],
+    ) -> Receiver<Result<SimTransaction, ErrorKind>> {
         let actions = operations
             .iter()
             .map(|a| match a {
@@ -53,9 +49,13 @@ where
         self.to_target
             .try_send(PartialTransaction::new(transaction, sender))
             .unwrap();
+        receiver
+    }
+}
 
-        let response = receiver.await.map_err(|_| ErrorKind::Other)?;
-        let actions = response?.actions;
+impl SimTransaction {
+    fn copy_to_ops(self, operations: &mut [Operation]) {
+        let actions = self.actions;
         for (op, reply) in operations.iter_mut().zip(actions) {
             match (op, reply) {
                 (Operation::Read(buf), SimOp::Read(response)) => {
@@ -66,7 +66,39 @@ where
                 _ => panic!("send operation does not matched received operation"),
             }
         }
+    }
+}
 
+impl<A> AsyncI2cController<A> for SimController
+where
+    A: AddressMode + Into<AnyAddress>,
+{
+    async fn transaction(
+        &mut self,
+        address: A,
+        operations: &mut [Operation<'_>],
+    ) -> Result<(), Self::Error> {
+        self.send_transaction(address.into(), operations)
+            .await
+            .map_err(|_| ErrorKind::Other)??
+            .copy_to_ops(operations);
+        Ok(())
+    }
+}
+
+impl<A> SyncI2cController<A> for SimController
+where
+    A: AddressMode + Into<AnyAddress>,
+{
+    fn transaction(
+        &mut self,
+        address: A,
+        operations: &mut [Operation<'_>],
+    ) -> Result<(), Self::Error> {
+        self.send_transaction(address.into(), operations)
+            .blocking_recv()
+            .map_err(|_| ErrorKind::Other)??
+            .copy_to_ops(operations);
         Ok(())
     }
 }
