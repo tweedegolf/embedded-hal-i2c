@@ -2,11 +2,14 @@ use embedded_hal_i2c::{
     AnyAddress, I2cTarget, ReadTransaction, TransactionExpectEither, WriteResult, WriteTransaction,
 };
 use log::info;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-const SLAVE_ADDR: Option<AnyAddress> = Some(AnyAddress::Seven(0x20));
+pub mod driver;
+
+pub const TARGET_ADDR: Option<AnyAddress> = Some(AnyAddress::Seven(0x20));
 const BUFLEN: usize = 512;
 
-pub async fn slave_service<I: I2cTarget>(mut i2c: I)
+pub async fn target_service<I: I2cTarget>(mut i2c: I, stop: &AtomicBool)
 where
     <I as I2cTarget>::Error: std::fmt::Debug,
 {
@@ -18,19 +21,22 @@ where
 
     let mut expect_read = false;
 
-    loop {
+    while !stop.load(Ordering::Relaxed) {
         let mut addr = [0u8; 2];
-        let result: TransactionExpectEither<_, _> = if expect_read && cur_addr < BUFLEN {
-            i2c.listen_expect_read(SLAVE_ADDR.unwrap(), buf.get(cur_addr..).unwrap_or_default())
-                .await
-                .unwrap()
-                .into()
+        let result = if expect_read && cur_addr < BUFLEN {
+            i2c.listen_expect_read(
+                TARGET_ADDR.unwrap(),
+                buf.get(cur_addr..).unwrap_or_default(),
+            )
+            .await
+            .map(TransactionExpectEither::from)
         } else {
-            i2c.listen_expect_write(SLAVE_ADDR.unwrap(), &mut addr)
+            i2c.listen_expect_write(TARGET_ADDR.unwrap(), &mut addr)
                 .await
-                .unwrap()
-                .into()
+                .map(TransactionExpectEither::from)
         };
+
+        let Ok(result) = result else { continue };
 
         use TransactionExpectEither::*;
         match result {

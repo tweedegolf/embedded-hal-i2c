@@ -8,5 +8,6 @@ embedded-hal-i2c = { path = "../embedded-hal-i2c" }
 log = "0.4.27"
 
 [dev-dependencies]
+env_logger = "0.11.8"
 simulator = { path = "../simulator" }
 tokio = { version = "1.44.2", features = ["rt", "macros"] }
