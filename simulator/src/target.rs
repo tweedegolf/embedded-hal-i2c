@@ -20,6 +20,7 @@ use crate::controller::SimController;
 pub struct SimTarget {
     current_transaction: Option<PartialTransaction>,
     from_controller: Receiver<PartialTransaction>,
+    need_to_report_deselect: bool,
 }
 
 impl SimTarget {
@@ -27,6 +28,7 @@ impl SimTarget {
         Self {
             current_transaction: None,
             from_controller,
+            need_to_report_deselect: false,
         }
     }
 
@@ -35,6 +37,10 @@ impl SimTarget {
             .current_transaction
             .take()
             .expect("Can only be done with error if there is a transaction");
+
+        println!("NAK transaction: {src:?}");
+        assert!(!self.need_to_report_deselect);
+        self.need_to_report_deselect = true;
 
         let _ = t.responder.send(Err(ErrorKind::NoAcknowledge(src)));
     }
@@ -56,6 +62,11 @@ impl I2cTarget for SimTarget {
     async fn listen(
         &mut self,
     ) -> Result<Transaction<Self::Read<'_>, Self::Write<'_>>, Self::Error> {
+        if self.need_to_report_deselect {
+            self.need_to_report_deselect = false;
+            return Ok(Transaction::Deselect);
+        }
+
         let current = match &mut self.current_transaction {
             Some(current) => current,
             None => {
@@ -72,7 +83,7 @@ impl I2cTarget for SimTarget {
                 // We are done with this one wait for the next
                 let done = self.current_transaction.take().unwrap();
                 assert_eq!(done.current_op, done.transaction.actions.len());
-                println!("Done transaction: {:?}", done.transaction);
+                println!("ACK transaction: {:?}", done.transaction);
                 let _ = done.responder.send(Ok(done.transaction));
                 Transaction::Deselect
             }
@@ -217,7 +228,11 @@ impl WriteTransaction for OnWrite<'_> {
         self.bytes_read += len;
 
         if self.remaining().is_empty() {
-            Ok(WriteResult::Complete(len))
+            if buffer.len() == len {
+                Ok(WriteResult::Partial(self))
+            } else {
+                Ok(WriteResult::Complete(len))
+            }
         } else {
             Ok(WriteResult::Partial(self))
         }
