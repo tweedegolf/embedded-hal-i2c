@@ -11,7 +11,7 @@
 //!
 //! # #[tokio::main(flavor = "current_thread")]
 //! # async fn main() {
-//! let (mut controller, mut target) = simulator(AnyAddress::Seven(42));
+//! let (mut controller, mut target) = simulator();
 //!
 //! let controller_task = async move {
 //!     let mut response = [0; 5];
@@ -37,6 +37,8 @@
 //!     let response = 0xc0ffee00_u32.to_be_bytes();
 //!     assert_eq!(address, AnyAddress::Seven(42));
 //!     handler.handle_complete(&response, 0xff).await.unwrap();
+//!
+//!     assert!(matches!(target.listen().await.unwrap(), Transaction::Deselect));
 //! };
 //!
 //! # tokio::time::timeout(std::time::Duration::from_secs(1), async move {

@@ -1,6 +1,6 @@
 use embedded_hal_i2c::{
     AnyAddress, AsyncI2cController, ErrorKind, I2cTarget, NoAcknowledgeSource, Operation,
-    ReadResult, ReadTransaction, Transaction, WriteTransaction,
+    ReadResult, ReadTransaction, Transaction, WriteResult, WriteTransaction,
 };
 use simulator::simulator;
 
@@ -37,6 +37,10 @@ async fn write_read() {
         assert_eq!(address, ADDR);
         let buffer = [1, 2, 3, 4, 5, 6, 7, 8];
         handler.handle_complete(&buffer, 0xFF).await.unwrap();
+
+        assert!(matches!(t.listen().await.unwrap(), Transaction::Deselect));
+
+        t
     };
 
     tokio::join!(control, target);
@@ -70,11 +74,15 @@ async fn nacking_everything() {
         assert_eq!(address, ADDR);
         drop(handler);
 
+        assert!(matches!(t.listen().await.unwrap(), Transaction::Deselect));
+
         let Transaction::Write { address, handler } = t.listen().await.unwrap() else {
             panic!()
         };
         assert_eq!(address, ADDR);
         drop(handler);
+
+        assert!(matches!(t.listen().await.unwrap(), Transaction::Deselect));
 
         let Transaction::Write { address, handler } = t.listen().await.unwrap() else {
             panic!()
@@ -82,11 +90,14 @@ async fn nacking_everything() {
         assert_eq!(address, ADDR);
         handler.handle_complete(&mut [0]).await.unwrap();
 
+        assert!(matches!(t.listen().await.unwrap(), Transaction::Deselect));
+
         // Only drop once we are done
         t
     };
 
-    tokio::join!(control, target);
+    let out = tokio::join!(control, target);
+    drop(out);
 }
 
 #[tokio::test]
@@ -142,6 +153,41 @@ async fn long_transation() {
             let len = handler.handle_complete(&mut buf).await.unwrap();
             assert_eq!(&buf[..len], [expect]);
         }
+
+        assert!(matches!(t.listen().await.unwrap(), Transaction::Deselect));
+    };
+
+    tokio::join!(control, target);
+}
+
+#[tokio::test]
+async fn write_nak() {
+    let (mut c, mut t) = simulator();
+
+    let control = async move {
+        c.write(A7, &[0, 0]).await.unwrap();
+    };
+
+    let target = async move {
+        let Transaction::Write { handler, .. } = t.listen().await.unwrap() else {
+            panic!()
+        };
+        let WriteResult::Partial(handler) = handler.handle_part(&mut [0, 0]).await.unwrap() else {
+            panic!("unexpected complete")
+        };
+
+        match handler.handle_part(&mut [0]).await.unwrap() {
+            WriteResult::Complete(0) => {}
+            WriteResult::Complete(cnt) => {
+                panic!("too long complete: {cnt}")
+            }
+            WriteResult::Partial(h) => {
+                drop(h);
+                panic!("Unexpected partial")
+            }
+        }
+
+        assert!(matches!(t.listen().await.unwrap(), Transaction::Deselect));
     };
 
     tokio::join!(control, target);
