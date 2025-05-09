@@ -1,5 +1,5 @@
 use crate::Interface;
-use embedded_hal_i2c::I2cTarget;
+use embedded_hal_i2c::AsyncI2cTarget;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -33,7 +33,7 @@ impl Interface for TestInterface {
     }
 }
 
-pub async fn server(i2c: impl I2cTarget, stop: Arc<AtomicBool>) {
+pub async fn server(i2c: impl AsyncI2cTarget, stop: Arc<AtomicBool>) {
     let iface = TestInterface { data: [0; 32] };
     super::run(i2c, iface, &stop).await;
 }

@@ -1,6 +1,6 @@
 use embedded_hal_i2c::{
-    AnyAddress, AsyncI2cController, ErrorKind, I2cTarget, NoAcknowledgeSource, Operation,
-    ReadResult, ReadTransaction, Transaction, WriteResult, WriteTransaction,
+    AnyAddress, AsyncI2cController, ErrorKind, AsyncI2cTarget, NoAcknowledgeSource, Operation,
+    ReadResult, AsyncReadTransaction, Transaction, WriteResult, AsyncWriteTransaction,
 };
 use simulator::simulator;
 
