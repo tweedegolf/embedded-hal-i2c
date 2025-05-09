@@ -2,8 +2,8 @@
 
 use crate::{PartialTransaction, SimOp};
 use embedded_hal_i2c::{
-    ErrorKind, I2cTarget, NoAcknowledgeSource, ReadResult, ReadTransaction, Transaction,
-    WriteResult, WriteTransaction,
+    ErrorKind, AsyncI2cTarget, NoAcknowledgeSource, ReadResult, AsyncReadTransaction, Transaction,
+    WriteResult, AsyncWriteTransaction,
 };
 use std::cmp::min;
 use tokio::sync::mpsc::Receiver;
@@ -54,7 +54,7 @@ impl SimTarget {
     }
 }
 
-impl I2cTarget for SimTarget {
+impl AsyncI2cTarget for SimTarget {
     type Error = ErrorKind;
     type Read<'a> = OnRead<'a>;
     type Write<'a> = OnWrite<'a>;
@@ -149,7 +149,7 @@ impl Drop for OnRead<'_> {
     }
 }
 
-impl ReadTransaction for OnRead<'_> {
+impl AsyncReadTransaction for OnRead<'_> {
     type Error = ErrorKind;
 
     async fn handle_part(mut self, buffer: &[u8]) -> Result<ReadResult<Self>, Self::Error> {
@@ -216,7 +216,7 @@ impl Drop for OnWrite<'_> {
     }
 }
 
-impl WriteTransaction for OnWrite<'_> {
+impl AsyncWriteTransaction for OnWrite<'_> {
     type Error = ErrorKind;
 
     async fn handle_part(mut self, buffer: &mut [u8]) -> Result<WriteResult<Self>, Self::Error> {

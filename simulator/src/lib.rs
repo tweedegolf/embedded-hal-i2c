@@ -54,7 +54,7 @@ use tokio::sync::mpsc::channel;
 use tokio::sync::oneshot;
 
 #[cfg(doc)]
-use embedded_hal_i2c::I2cTarget;
+use embedded_hal_i2c::AsyncI2cTarget;
 
 pub mod controller;
 pub mod target;
