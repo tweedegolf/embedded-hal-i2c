@@ -150,6 +150,10 @@ impl AsyncReadTransaction for OnRead<'_> {
     type Error = ErrorKind;
 
     async fn handle_part(mut self, buffer: &[u8]) -> Result<ReadResult<Self>, Self::Error> {
+        if buffer.is_empty() {
+            // do nothing
+            return Ok(ReadResult::Partial(self));
+        }
         self.did_start = true;
         let target = self.remaining();
 
@@ -199,16 +203,18 @@ impl<'a> OnWrite<'a> {
 
         &buf[self.bytes_read..]
     }
+
+    fn disarm(self) {
+        core::mem::forget(self);
+    }
 }
 
 impl Drop for OnWrite<'_> {
     fn drop(&mut self) {
         if !self.did_start {
             self.inner.nak(NoAcknowledgeSource::Address);
-        } else if !self.remaining().is_empty() {
-            self.inner.nak(NoAcknowledgeSource::Data);
         } else {
-            self.inner.next()
+            self.inner.nak(NoAcknowledgeSource::Data);
         }
     }
 }
@@ -217,6 +223,10 @@ impl AsyncWriteTransaction for OnWrite<'_> {
     type Error = ErrorKind;
 
     async fn handle_part(mut self, buffer: &mut [u8]) -> Result<WriteResult<Self>, Self::Error> {
+        if buffer.is_empty() {
+            // do nothing
+            return Ok(WriteResult::Partial(self));
+        }
         self.did_start = true;
         let source = self.remaining();
 
@@ -228,6 +238,8 @@ impl AsyncWriteTransaction for OnWrite<'_> {
             if buffer.len() == len {
                 Ok(WriteResult::Partial(self))
             } else {
+                self.inner.next();
+                self.disarm();
                 Ok(WriteResult::Complete(len))
             }
         } else {
