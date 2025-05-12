@@ -1,4 +1,4 @@
-use embedded_hal_i2c::{ExpectHandledWrite, I2cTarget};
+use embedded_hal_i2c::{AsyncI2cTarget, TransactionExpectWrite};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub mod tests;
@@ -10,7 +10,7 @@ pub trait Interface {
     fn write_reg(&mut self, addr: u8, data: &[u8]) -> Result<(), Self::Error>;
 }
 
-pub async fn run(mut i2c: impl I2cTarget, mut interface: impl Interface, stop: &AtomicBool) {
+pub async fn run(mut i2c: impl AsyncI2cTarget, mut interface: impl Interface, stop: &AtomicBool) {
     let my_address = 0x2a_u8.into();
 
     let mut buf = [0u8; 64];
@@ -18,7 +18,7 @@ pub async fn run(mut i2c: impl I2cTarget, mut interface: impl Interface, stop: &
         // We need to start with a write. This will either be a single byte (for a "write then read"),
         // or a multi-byte sequence (for a "write then write")
         let res = i2c.listen_expect_write(my_address, &mut buf).await;
-        let Ok(ExpectHandledWrite::HandledCompletely(size)) = res else {
+        let Ok(TransactionExpectWrite::ExpectedCompleteWrite { size }) = res else {
             // I dunno what they wanted.
             continue;
         };

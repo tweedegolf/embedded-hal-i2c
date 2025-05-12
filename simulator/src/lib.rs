@@ -1,11 +1,11 @@
 #![warn(missing_docs)]
 
-//! This crate provides an implementation of [`I2cTarget`] that can be run locally.
+//! This crate provides an implementation of [`AsyncI2cTarget`] that can be run locally.
 //!
 //! # Example
 //! ```rust
 //! use embedded_hal_i2c::{
-//!     AnyAddress, AsyncI2cController, I2cTarget, ReadTransaction, Transaction, WriteTransaction,
+//!     AnyAddress, AsyncI2cController, AsyncI2cTarget, AsyncReadTransaction, Transaction, AsyncWriteTransaction,
 //! };
 //! use simulator::simulator;
 //!
@@ -54,7 +54,7 @@ use tokio::sync::mpsc::channel;
 use tokio::sync::oneshot;
 
 #[cfg(doc)]
-use embedded_hal_i2c::I2cTarget;
+use embedded_hal_i2c::AsyncI2cTarget;
 
 pub mod controller;
 pub mod target;

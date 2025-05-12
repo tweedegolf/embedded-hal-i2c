@@ -1,6 +1,6 @@
 use embedded_hal_i2c::{
-    AnyAddress, AsyncI2cController, ErrorKind, I2cTarget, NoAcknowledgeSource, Operation,
-    ReadResult, ReadTransaction, Transaction, WriteResult, WriteTransaction,
+    AnyAddress, AsyncI2cController, AsyncI2cTarget, AsyncReadTransaction, AsyncWriteTransaction,
+    ErrorKind, NoAcknowledgeSource, Operation, ReadResult, Transaction, WriteResult,
 };
 use simulator::simulator;
 
@@ -138,7 +138,7 @@ async fn long_transation() {
                 panic!()
             };
             assert_eq!(address, ADDR);
-            let ReadResult::Finished(len) = handler.handle_part(&[expect, 0]).await.unwrap() else {
+            let ReadResult::Complete(len) = handler.handle_part(&[expect, 0]).await.unwrap() else {
                 panic!()
             };
             assert_eq!(len, 1);
