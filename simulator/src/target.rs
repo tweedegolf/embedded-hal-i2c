@@ -2,20 +2,17 @@
 
 use crate::{PartialTransaction, SimOp};
 use embedded_hal_i2c::{
-    ErrorKind, I2cTarget, NoAcknowledgeSource, ReadResult, ReadTransaction, Transaction,
-    WriteResult, WriteTransaction,
+    AsyncI2cTarget, AsyncReadTransaction, AsyncWriteTransaction, ErrorKind, NoAcknowledgeSource,
+    ReadResult, Transaction, WriteResult,
 };
 use std::cmp::min;
 use tokio::sync::mpsc::Receiver;
 
-#[cfg(doc)]
-use crate::controller::SimController;
-
 /// Simulated I2C target
 ///
-/// This can be created with [`crate::simulator`], which also returns the linked [`SimController`].
-/// All [`I2cTarget::listen`], [`ReadTransaction::handle_part`],
-/// and [`WriteTransaction::handle_part`] calls on this target are forwarded
+/// This can be created with [`crate::simulator`], which also returns the linked [`SimController`](crate::controller::SimController).
+/// All [`AsyncI2cTarget::listen`], [`AsyncReadTransaction::handle_part`],
+/// and [`AsyncWriteTransaction::handle_part`] calls on this target are forwarded
 /// to back to the controller as if there was a real I2C bus connecting the two.
 pub struct SimTarget {
     current_transaction: Option<PartialTransaction>,
@@ -54,7 +51,7 @@ impl SimTarget {
     }
 }
 
-impl I2cTarget for SimTarget {
+impl AsyncI2cTarget for SimTarget {
     type Error = ErrorKind;
     type Read<'a> = OnRead<'a>;
     type Write<'a> = OnWrite<'a>;
@@ -149,7 +146,7 @@ impl Drop for OnRead<'_> {
     }
 }
 
-impl ReadTransaction for OnRead<'_> {
+impl AsyncReadTransaction for OnRead<'_> {
     type Error = ErrorKind;
 
     async fn handle_part(mut self, buffer: &[u8]) -> Result<ReadResult<Self>, Self::Error> {
@@ -161,9 +158,9 @@ impl ReadTransaction for OnRead<'_> {
         self.bytes_filled += len;
 
         if self.remaining().is_empty() {
-            Ok(ReadResult::Finished(len))
+            Ok(ReadResult::Complete(len))
         } else {
-            Ok(ReadResult::PartialComplete(self))
+            Ok(ReadResult::Partial(self))
         }
     }
 }
@@ -216,7 +213,7 @@ impl Drop for OnWrite<'_> {
     }
 }
 
-impl WriteTransaction for OnWrite<'_> {
+impl AsyncWriteTransaction for OnWrite<'_> {
     type Error = ErrorKind;
 
     async fn handle_part(mut self, buffer: &mut [u8]) -> Result<WriteResult<Self>, Self::Error> {

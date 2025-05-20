@@ -1,5 +1,6 @@
 use embedded_hal_i2c::{
-    AnyAddress, I2cTarget, ReadTransaction, TransactionExpectEither, WriteResult, WriteTransaction,
+    AnyAddress, AsyncI2cTarget, AsyncReadTransaction, AsyncWriteTransaction,
+    TransactionExpectEither, WriteResult,
 };
 use log::info;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,9 +10,9 @@ pub mod driver;
 pub const TARGET_ADDR: Option<AnyAddress> = Some(AnyAddress::Seven(0x20));
 const BUFLEN: usize = 512;
 
-pub async fn target_service<I: I2cTarget>(mut i2c: I, stop: &AtomicBool)
+pub async fn target_service<I: AsyncI2cTarget>(mut i2c: I, stop: &AtomicBool)
 where
-    <I as I2cTarget>::Error: std::fmt::Debug,
+    <I as AsyncI2cTarget>::Error: std::fmt::Debug,
 {
     // Implement a simple i2c RAM, demonstrating the features
     // of the new interface.
