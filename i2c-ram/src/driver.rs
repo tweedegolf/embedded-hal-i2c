@@ -1,4 +1,4 @@
-use embedded_hal_i2c::{AddressMode, AsyncI2cController, Error as _, ErrorKind, Operation};
+use embedded_hal_i2c::{AddressMode, AsyncI2cController, Error as _, ErrorKind};
 
 pub struct I2cRam<I, A> {
     i2c: I,
@@ -25,16 +25,31 @@ where
     }
 
     pub async fn write(&mut self, address: u16, buf: &[u8]) -> Result<(), Error<I::Error>> {
-        let mem_address = address.to_le_bytes();
-        let mut transaction = [Operation::Write(&mem_address), Operation::Write(buf)];
+        const CHUNK_SIZE: usize = 16;
+        const ADDR_SIZE: usize = size_of::<u16>();
 
-        self.i2c
-            .transaction(self.address, &mut transaction)
-            .await
-            .map_err(|e| match e.kind() {
-                ErrorKind::NoAcknowledge(_) => Error::OutOfBounds,
-                _ => Error::I2c(e),
-            })
+        let mut chunk_buf = [0; { ADDR_SIZE + CHUNK_SIZE }];
+
+        for (i, chunk) in buf.chunks(CHUNK_SIZE).enumerate() {
+            let chunk_address =
+                u16::try_from(address as usize + i * CHUNK_SIZE).map_err(|_| Error::OutOfBounds)?;
+            let data_len = chunk.len();
+            let transaction_len = data_len + ADDR_SIZE;
+
+            let (addr_buf, data_buf) = chunk_buf.split_at_mut(ADDR_SIZE);
+            addr_buf.copy_from_slice(&chunk_address.to_le_bytes());
+            data_buf[..data_len].copy_from_slice(chunk);
+
+            self.i2c
+                .write(self.address, &chunk_buf[..transaction_len])
+                .await
+                .map_err(|e| match e.kind() {
+                    ErrorKind::NoAcknowledge(_) => Error::OutOfBounds,
+                    _ => Error::I2c(e),
+                })?
+        }
+
+        Ok(())
     }
 }
 
