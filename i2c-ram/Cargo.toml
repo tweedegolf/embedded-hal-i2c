@@ -2,6 +2,7 @@
 name = "i2c-ram"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 
 [dependencies]
 embedded-hal-i2c = { path = "../embedded-hal-i2c" }
